@@ -29,6 +29,17 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## AdSense setup
+
+The app can load the Google AdSense script when you set a public client ID:
+
+```bash
+NEXT_PUBLIC_ADSENSE_CLIENT=ca-pub-0000000000000000
+```
+
+Replace the placeholder with your real AdSense publisher ID. After Google gives you an `ads.txt` line, add it to
+`public/ads.txt` and redeploy.
+
 ## Checks
 
 ```bash

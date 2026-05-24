@@ -736,7 +736,21 @@ export function PdfEditor() {
           <h1 className="text-xl font-semibold">PDF Editor</h1>
           <p className="text-sm text-[#69635b]">Local-first visual editing for quick cleanups and covers.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <nav className="flex flex-wrap items-center gap-1 text-sm text-[#69635b]">
+            <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/guides">
+              Guides
+            </a>
+            <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/about">
+              About
+            </a>
+            <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/privacy">
+              Privacy
+            </a>
+            <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/contact">
+              Contact
+            </a>
+          </nav>
           <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-[#211f1c] px-4 text-sm font-medium text-white hover:bg-[#3a3630]">
             <FileUp size={18} />
             Upload
