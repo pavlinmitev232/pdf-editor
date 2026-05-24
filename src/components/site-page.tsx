@@ -12,6 +12,7 @@ const navLinks = [
   { href: "/guides", label: "Guides" },
   { href: "/about", label: "About" },
   { href: "/privacy", label: "Privacy" },
+  { href: "/cookies", label: "Cookies" },
   { href: "/terms", label: "Terms" },
   { href: "/contact", label: "Contact" },
 ];
@@ -49,7 +50,10 @@ export function SitePage({ title, kicker, children }: SitePageProps) {
           <span>PDF Editor</span>
           <nav className="flex flex-wrap gap-3">
             <Link href="/privacy">Privacy</Link>
+            <Link href="/cookies">Cookies</Link>
             <Link href="/terms">Terms</Link>
+            <Link href="/acceptable-use">Acceptable Use</Link>
+            <Link href="/disclaimer">Disclaimer</Link>
             <Link href="/contact">Contact</Link>
           </nav>
         </div>

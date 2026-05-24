@@ -17,6 +17,10 @@ export default function ContactPage() {
         .
       </p>
       <p>
+        Legal, privacy, copyright, and advertising questions can be sent to the same address. Replace this placeholder
+        with the public support email for your domain before launch.
+      </p>
+      <p>
         Please include the browser you are using, the rough PDF size, and what you were trying to do. Do not email private
         documents unless you are comfortable sharing them.
       </p>

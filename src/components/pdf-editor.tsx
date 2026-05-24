@@ -747,6 +747,9 @@ export function PdfEditor() {
             <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/privacy">
               Privacy
             </a>
+            <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/cookies">
+              Cookies
+            </a>
             <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/contact">
               Contact
             </a>

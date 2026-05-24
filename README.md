@@ -40,6 +40,10 @@ NEXT_PUBLIC_ADSENSE_CLIENT=ca-pub-0000000000000000
 Replace the placeholder with your real AdSense publisher ID. After Google gives you an `ads.txt` line, add it to
 `public/ads.txt` and redeploy.
 
+Before applying, replace `hello@yourdomain.com` in the legal pages with your public support email. If you serve ads to
+users in the EEA, UK, or Switzerland, configure a Google-certified Consent Management Platform instead of relying on a
+custom cookie notice.
+
 ## Checks
 
 ```bash
