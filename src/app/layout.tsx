@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
+import { siteConfig } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,11 +15,32 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteConfig.url),
   title: {
-    default: "PDF Editor",
-    template: "%s | PDF Editor",
+    default: `${siteConfig.name} - Edit PDFs in your browser`,
+    template: `%s | ${siteConfig.name}`,
   },
-  description: "A simple browser-first PDF editor for visual cleanup, covers, color matching, and text edits.",
+  description: siteConfig.description,
+  applicationName: siteConfig.name,
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: siteConfig.url,
+    siteName: siteConfig.name,
+    title: `${siteConfig.name} - Private browser PDF editor`,
+    description: siteConfig.description,
+  },
+  twitter: {
+    card: "summary",
+    title: `${siteConfig.name} - Private browser PDF editor`,
+    description: siteConfig.description,
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
@@ -27,6 +49,27 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const adsenseClient = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
+  const softwareSchema = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: siteConfig.name,
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web browser",
+    url: siteConfig.url,
+    description: siteConfig.description,
+    offers: {
+      "@type": "Offer",
+      price: "0",
+      priceCurrency: "USD",
+    },
+    featureList: [
+      "Edit PDFs in the browser",
+      "Add text to PDF pages",
+      "Cover PDF content with color-matched boxes",
+      "Pick colors from rendered PDF pages",
+      "Export edited PDF files",
+    ],
+  };
 
   return (
     <html
@@ -42,6 +85,10 @@ export default function RootLayout({
             strategy="afterInteractive"
           />
         ) : null}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }}
+        />
         {children}
       </body>
     </html>

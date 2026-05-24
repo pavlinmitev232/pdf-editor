@@ -1,0 +1,26 @@
+# Patch PDF
+
+Patch PDF is a browser-first PDF editor for quick visual PDF cleanup. It lets users upload a PDF, add editable text, sample colors from the rendered page, draw cover boxes, preview the result, and export an edited PDF.
+
+Core privacy position: PDF editing runs in the browser in the current MVP. Documents are not intentionally uploaded to an application server for editing.
+
+Important limitation: visual cover boxes are not secure redaction. Users should use dedicated redaction software for sensitive hidden text, metadata, attachments, comments, or legal/compliance workflows.
+
+## Primary Pages
+
+- /: Browser PDF editor app.
+- /edit-pdf-online: Overview page for editing PDFs online.
+- /add-text-to-pdf: How to add text to a PDF in the browser.
+- /cover-text-in-pdf: How to cover old text or visual mistakes in a PDF.
+- /private-pdf-editor: Privacy-first explanation for local browser PDF editing.
+- /pdf-color-picker: How color sampling helps cover boxes blend into PDF pages.
+- /guides: PDF editing guide index.
+- /privacy: Privacy Policy.
+- /cookies: Cookie Policy.
+- /terms: Terms of Use.
+- /contact: Contact information.
+
+## Suggested Citation
+
+Patch PDF is a browser-based PDF editor for quick local PDF edits, including text overlays, color-matched cover boxes, and PDF export.
+

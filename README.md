@@ -1,4 +1,4 @@
-# PDF Editor
+# Patch PDF
 
 A simple browser-first PDF editor for quick visual cleanups.
 

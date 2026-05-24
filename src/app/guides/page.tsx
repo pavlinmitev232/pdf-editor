@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { SitePage } from "@/components/site-page";
+import { seoPages } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "PDF Guides",
@@ -32,6 +33,19 @@ export default function GuidesPage() {
         These guides explain the practical details behind quick PDF cleanup: matching background colors, covering old
         content, adding replacement text, and exporting a new document from the browser.
       </p>
+      <div className="grid gap-3">
+        {seoPages.map((page) => (
+          <Link
+            key={page.href}
+            className="rounded-md border border-[#ded8cc] bg-[#fffdfa] p-5 hover:border-[#146c63]"
+            href={page.href}
+          >
+            <h2 className="text-xl font-semibold text-[#211f1c]">{page.title}</h2>
+            <p className="mt-2 text-[#69635b]">{page.description}</p>
+          </Link>
+        ))}
+      </div>
+      <h2 className="text-2xl font-semibold text-[#211f1c]">More guides</h2>
       <div className="grid gap-3">
         {guides.map((guide) => (
           <Link

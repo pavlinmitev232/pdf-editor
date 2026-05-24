@@ -20,6 +20,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { siteConfig } from "@/lib/site";
 
 type Tool = "select" | "pick" | "box" | "text";
 
@@ -733,13 +734,16 @@ export function PdfEditor() {
     <main className="flex h-screen overflow-hidden flex-col bg-[#f5f3ef] text-[#211f1c]">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-[#ded8cc] bg-[#fffdfa] px-5 py-3">
         <div>
-          <h1 className="text-xl font-semibold">PDF Editor</h1>
+          <h1 className="text-xl font-semibold">{siteConfig.name}</h1>
           <p className="text-sm text-[#69635b]">Local-first visual editing for quick cleanups and covers.</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <nav className="flex flex-wrap items-center gap-1 text-sm text-[#69635b]">
             <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/guides">
               Guides
+            </a>
+            <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/edit-pdf-online">
+              Tools
             </a>
             <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/about">
               About

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { seoPages, siteConfig } from "@/lib/site";
 
 type SitePageProps = {
   title: string;
@@ -9,6 +10,7 @@ type SitePageProps = {
 
 const navLinks = [
   { href: "/", label: "Editor" },
+  { href: "/edit-pdf-online", label: "Tools" },
   { href: "/guides", label: "Guides" },
   { href: "/about", label: "About" },
   { href: "/privacy", label: "Privacy" },
@@ -23,7 +25,7 @@ export function SitePage({ title, kicker, children }: SitePageProps) {
       <header className="border-b border-[#ded8cc] bg-[#fffdfa]">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-5 py-4">
           <Link className="text-lg font-semibold" href="/">
-            PDF Editor
+            {siteConfig.name}
           </Link>
           <nav className="flex flex-wrap items-center gap-1 text-sm text-[#69635b]">
             {navLinks.map((link) => (
@@ -47,8 +49,13 @@ export function SitePage({ title, kicker, children }: SitePageProps) {
 
       <footer className="border-t border-[#ded8cc] bg-[#fffdfa]">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-5 py-5 text-sm text-[#69635b]">
-          <span>PDF Editor</span>
+          <span>{siteConfig.name}</span>
           <nav className="flex flex-wrap gap-3">
+            {seoPages.slice(0, 3).map((page) => (
+              <Link key={page.href} href={page.href}>
+                {page.title}
+              </Link>
+            ))}
             <Link href="/privacy">Privacy</Link>
             <Link href="/cookies">Cookies</Link>
             <Link href="/terms">Terms</Link>
