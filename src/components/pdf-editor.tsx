@@ -1,9 +1,12 @@
 "use client";
 
-import { ChangeEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import {
+  Copy,
   Download,
+  Eye,
+  EyeOff,
   FileUp,
   List,
   Maximize,
@@ -40,11 +43,13 @@ type PageInfo = {
 
 type DragState = {
   id: string;
-  mode: "move" | "resize";
+  mode: "move" | ResizeMode;
   startX: number;
   startY: number;
   original: Overlay;
 };
+
+type ResizeMode = "resize-n" | "resize-e" | "resize-s" | "resize-w" | "resize-ne" | "resize-se" | "resize-sw" | "resize-nw";
 
 type DrawingState = {
   startX: number;
@@ -76,6 +81,21 @@ const toolOptions: Array<{ id: Tool; label: string; icon: React.ComponentType<{ 
   { id: "pick", label: "Pick color", icon: Palette },
   { id: "box", label: "Box", icon: Square },
   { id: "text", label: "Text", icon: Type },
+];
+
+const resizeHandles: Array<{
+  mode: ResizeMode;
+  className: string;
+  cursor: string;
+}> = [
+  { mode: "resize-nw", className: "-top-1.5 -left-1.5", cursor: "cursor-nwse-resize" },
+  { mode: "resize-n", className: "-top-1.5 left-1/2 -translate-x-1/2", cursor: "cursor-ns-resize" },
+  { mode: "resize-ne", className: "-top-1.5 -right-1.5", cursor: "cursor-nesw-resize" },
+  { mode: "resize-e", className: "top-1/2 -right-1.5 -translate-y-1/2", cursor: "cursor-ew-resize" },
+  { mode: "resize-se", className: "-bottom-1.5 -right-1.5", cursor: "cursor-nwse-resize" },
+  { mode: "resize-s", className: "-bottom-1.5 left-1/2 -translate-x-1/2", cursor: "cursor-ns-resize" },
+  { mode: "resize-sw", className: "-bottom-1.5 -left-1.5", cursor: "cursor-nesw-resize" },
+  { mode: "resize-w", className: "top-1/2 -left-1.5 -translate-y-1/2", cursor: "cursor-ew-resize" },
 ];
 
 function hexToRgb(color: string) {
@@ -137,6 +157,7 @@ export function PdfEditor() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [fitAfterRender, setFitAfterRender] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const [status, setStatus] = useState("Upload a PDF to start editing in your browser.");
 
   const currentOverlays = useMemo(
@@ -162,6 +183,13 @@ export function PdfEditor() {
     },
     [overlays],
   );
+
+  const recordHistory = useCallback(() => {
+    setHistory((items) => ({
+      past: [...items.past.slice(-24), overlays],
+      future: [],
+    }));
+  }, [overlays]);
 
   const undo = useCallback(() => {
     setHistory((items) => {
@@ -193,8 +221,7 @@ export function PdfEditor() {
     setStatus("Redid the edit.");
   }, [overlays]);
 
-  const loadPdf = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const loadPdfFile = async (file: File) => {
     if (!file) return;
 
     const bytes = await file.arrayBuffer();
@@ -221,8 +248,16 @@ export function PdfEditor() {
     setHistory({ past: [], future: [] });
     setSelectedId(null);
     setEditingTextId(null);
+    setPreviewMode(false);
     setFitAfterRender(true);
     setStatus(`${file.name} loaded. Pick a tool and click on the page.`);
+  };
+
+  const loadPdf = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await loadPdfFile(file);
+    event.target.value = "";
   };
 
   const renderPage = useCallback(async () => {
@@ -417,12 +452,9 @@ export function PdfEditor() {
     setStatus("Box added. The dashed outline is only visible in the editor.");
   };
 
-  const startDrag = (event: PointerEvent<HTMLDivElement>, overlay: Overlay, mode: "move" | "resize") => {
+  const startDrag = (event: PointerEvent<HTMLDivElement>, overlay: Overlay, mode: DragState["mode"]) => {
     event.stopPropagation();
-    setHistory((items) => ({
-      past: [...items.past.slice(-24), overlays],
-      future: [],
-    }));
+    recordHistory();
     setEditingTextId(null);
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedId(overlay.id);
@@ -445,11 +477,40 @@ export function PdfEditor() {
       items.map((overlay) => {
         if (overlay.id !== dragState.id) return overlay;
 
-        if (dragState.mode === "resize") {
+        if (dragState.mode !== "move") {
+          const minWidth = 24;
+          const minHeight = 18;
+          const originalRight = dragState.original.x + dragState.original.width;
+          const originalBottom = dragState.original.y + dragState.original.height;
+          let nextX = dragState.original.x;
+          let nextY = dragState.original.y;
+          let nextWidth = dragState.original.width;
+          let nextHeight = dragState.original.height;
+
+          if (dragState.mode.includes("e")) {
+            nextWidth = Math.max(minWidth, Math.min(pageInfo.width - nextX, dragState.original.width + dx));
+          }
+
+          if (dragState.mode.includes("s")) {
+            nextHeight = Math.max(minHeight, Math.min(pageInfo.height - nextY, dragState.original.height + dy));
+          }
+
+          if (dragState.mode.includes("w")) {
+            nextX = Math.max(0, Math.min(originalRight - minWidth, dragState.original.x + dx));
+            nextWidth = originalRight - nextX;
+          }
+
+          if (dragState.mode.includes("n")) {
+            nextY = Math.max(0, Math.min(originalBottom - minHeight, dragState.original.y + dy));
+            nextHeight = originalBottom - nextY;
+          }
+
           return {
             ...overlay,
-            width: Math.max(24, Math.min(pageInfo.width - overlay.x, dragState.original.width + dx)),
-            height: Math.max(18, Math.min(pageInfo.height - overlay.y, dragState.original.height + dy)),
+            x: nextX,
+            y: nextY,
+            width: nextWidth,
+            height: nextHeight,
           };
         }
 
@@ -495,17 +556,34 @@ export function PdfEditor() {
     if (!isHexColor(color)) return;
     setTextColor(color);
     if (selectedId) {
-      setOverlays((items) =>
-        items.map((overlay) =>
-          overlay.id === selectedId && overlay.type === "text"
-            ? {
-                ...overlay,
-                color,
-              }
-            : overlay,
-        ),
-      );
+      updateOverlay(selectedId, { color });
     }
+  };
+
+  const duplicateSelected = useCallback(() => {
+    if (!selectedOverlay || !pageInfo) return;
+    const offset = 18;
+    const duplicate: Overlay = {
+      ...selectedOverlay,
+      id: crypto.randomUUID(),
+      x: Math.min(pageInfo.width - selectedOverlay.width, selectedOverlay.x + offset),
+      y: Math.min(pageInfo.height - selectedOverlay.height, selectedOverlay.y + offset),
+    };
+
+    commitOverlays([...overlays, duplicate]);
+    setSelectedId(duplicate.id);
+    setEditingTextId(duplicate.type === "text" ? duplicate.id : null);
+    setStatus(`${duplicate.type === "box" ? "Box" : "Text"} duplicated.`);
+  }, [commitOverlays, overlays, pageInfo, selectedOverlay]);
+
+  const handleDrop = async (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    const file = Array.from(event.dataTransfer.files).find((item) => item.type === "application/pdf" || item.name.toLowerCase().endsWith(".pdf"));
+    if (!file) {
+      setStatus("Drop a PDF file to upload.");
+      return;
+    }
+    await loadPdfFile(file);
   };
 
   const fitToWidth = () => {
@@ -559,7 +637,14 @@ export function PdfEditor() {
         setTool("select");
         setDrawingState(null);
         setEditingTextId(null);
+        setPreviewMode(false);
         setStatus("Select tool active.");
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d" && selectedId && !isTyping) {
+        event.preventDefault();
+        duplicateSelected();
         return;
       }
 
@@ -571,7 +656,7 @@ export function PdfEditor() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [deleteSelected, redo, selectedId, undo]);
+  }, [deleteSelected, duplicateSelected, redo, selectedId, undo]);
 
   const exportPdf = async () => {
     if (!pdfBytes || !pageInfo || !pdfDocProxy) return;
@@ -729,6 +814,17 @@ export function PdfEditor() {
               </button>
             </div>
 
+            <button
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#ded8cc] bg-white text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!selectedOverlay}
+              type="button"
+              onClick={duplicateSelected}
+              title="Duplicate selected"
+            >
+              <Copy size={17} />
+              Duplicate selected
+            </button>
+
             {(showBoxControls || showTextControls) ? (
               <section className="space-y-3">
                 <h2 className="text-xs font-semibold uppercase tracking-normal text-[#69635b]">Style</h2>
@@ -745,6 +841,7 @@ export function PdfEditor() {
                       <input
                         className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
                         value={pickedColor}
+                        onFocus={recordHistory}
                         onChange={(event) => {
                           if (isHexColor(event.target.value)) {
                             setPickedColor(event.target.value);
@@ -764,11 +861,13 @@ export function PdfEditor() {
                           className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
                           type="color"
                           value={textColor}
+                          onFocus={recordHistory}
                           onChange={(event) => updateSelectedTextColor(event.target.value)}
                         />
                         <input
                           className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
                           value={textColor}
+                          onFocus={recordHistory}
                           onChange={(event) => updateSelectedTextColor(event.target.value)}
                         />
                       </div>
@@ -780,6 +879,7 @@ export function PdfEditor() {
                         className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
                         placeholder="Type on the page or here"
                         value={textValue}
+                        onFocus={recordHistory}
                         onChange={(event) => {
                           setTextValue(event.target.value);
                           if (selectedOverlay?.type === "text") {
@@ -797,6 +897,7 @@ export function PdfEditor() {
                         max={96}
                         type="number"
                         value={fontSize}
+                        onFocus={recordHistory}
                         onChange={(event) => {
                           const nextSize = Number(event.target.value);
                           setFontSize(nextSize);
@@ -919,6 +1020,23 @@ export function PdfEditor() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
+                className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium ${
+                  previewMode
+                    ? "border-[#211f1c] bg-[#211f1c] text-white"
+                    : "border-[#ded8cc] bg-white text-[#211f1c] hover:bg-[#f5f3ef]"
+                }`}
+                disabled={!pdfBytes}
+                type="button"
+                onClick={() => {
+                  setPreviewMode((value) => !value);
+                  setEditingTextId(null);
+                  setStatus(previewMode ? "Editor mode active." : "Preview mode active. Editor outlines and handles are hidden.");
+                }}
+              >
+                {previewMode ? <EyeOff size={16} /> : <Eye size={16} />}
+                {previewMode ? "Exit preview" : "Preview"}
+              </button>
+              <button
                 className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md bg-[#146c63] px-3 text-sm font-medium text-white hover:bg-[#0f5e56] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#146c63]"
                 disabled={!pdfBytes || overlays.length === 0 || isExporting}
                 type="button"
@@ -959,28 +1077,33 @@ export function PdfEditor() {
             </div>
           </div>
 
-          <div ref={stageRef} className="flex flex-1 overflow-auto p-5">
+          <div
+            ref={stageRef}
+            className="flex flex-1 overflow-auto p-5"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={handleDrop}
+          >
             {pdfDocProxy ? (
               <div
                 className={`relative m-auto shadow-xl shadow-black/15 ${
-                  tool === "pick" || isPlacing ? "cursor-crosshair" : ""
+                  !previewMode && (tool === "pick" || isPlacing) ? "cursor-crosshair" : ""
                 }`}
                 style={{
                   width: pageInfo ? pageInfo.width * zoom : undefined,
                   height: pageInfo ? pageInfo.height * zoom : undefined,
                 }}
-                onPointerDown={handlePagePointerDown}
-                onPointerMove={handlePagePointerMove}
-                onPointerUp={finishDrawing}
-                onPointerLeave={finishDrawing}
+                onPointerDown={previewMode ? undefined : handlePagePointerDown}
+                onPointerMove={previewMode ? undefined : handlePagePointerMove}
+                onPointerUp={previewMode ? undefined : finishDrawing}
+                onPointerLeave={previewMode ? undefined : finishDrawing}
               >
                 <canvas ref={canvasRef} className="absolute inset-0 bg-white" />
-                {isPlacing ? (
+                {!previewMode && isPlacing ? (
                   <div className="pointer-events-none absolute left-3 top-3 z-20 rounded-md border border-[#146c63] bg-white/95 px-3 py-2 text-xs font-semibold text-[#146c63] shadow-sm">
                     {tool === "box" ? "Drag to draw box" : "Click to place text"}
                   </div>
                 ) : null}
-                {drawingState ? (
+                {!previewMode && drawingState ? (
                   <div
                     className="pointer-events-none absolute z-10 border-2 border-dashed border-[#146c63] bg-[#146c63]/15"
                     style={{
@@ -1017,7 +1140,9 @@ export function PdfEditor() {
                   <div
                     key={overlay.id}
                     className={`absolute touch-none ${
-                      selectedId === overlay.id
+                      previewMode
+                        ? "outline outline-1 outline-transparent"
+                        : selectedId === overlay.id
                         ? "outline outline-2 outline-[#146c63]"
                         : overlay.type === "box"
                           ? "outline outline-1 outline-transparent hover:outline-[#146c63]/35"
@@ -1036,6 +1161,7 @@ export function PdfEditor() {
                     }}
                     onPointerDown={(event) => {
                       event.stopPropagation();
+                      if (previewMode) return;
                       if (tool === "select" && selectedId === overlay.id && overlay.type === "box") {
                         startDrag(event, overlay, "move");
                         return;
@@ -1056,6 +1182,7 @@ export function PdfEditor() {
                             fontSize: (overlay.fontSize || 18) * zoom,
                           }}
                           value={overlay.text || ""}
+                          onFocus={recordHistory}
                           onChange={(event) => {
                             updateOverlay(overlay.id, { text: event.target.value });
                             setTextValue(event.target.value);
@@ -1066,7 +1193,7 @@ export function PdfEditor() {
                         <span>{overlay.text}</span>
                       )
                     ) : null}
-                    {selectedId === overlay.id ? (
+                    {!previewMode && selectedId === overlay.id ? (
                       <>
                         <div
                           className="absolute -top-2 -left-2 h-4 w-4 cursor-move rounded-sm border border-white bg-[#146c63] shadow-sm"
@@ -1075,19 +1202,26 @@ export function PdfEditor() {
                           onPointerMove={continueDrag}
                           onPointerUp={() => setDragState(null)}
                         />
-                        <div
-                          className="absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-white bg-[#146c63]"
-                          onPointerDown={(event) => startDrag(event, overlay, "resize")}
-                          onPointerMove={continueDrag}
-                          onPointerUp={() => setDragState(null)}
-                        />
+                        {resizeHandles.map((handle) => (
+                          <div
+                            key={handle.mode}
+                            className={`absolute h-3.5 w-3.5 rounded-sm border border-white bg-[#146c63] shadow-sm ${handle.className} ${handle.cursor}`}
+                            onPointerDown={(event) => startDrag(event, overlay, handle.mode)}
+                            onPointerMove={continueDrag}
+                            onPointerUp={() => setDragState(null)}
+                          />
+                        ))}
                       </>
                     ) : null}
                   </div>
                 ))}
               </div>
             ) : (
-              <label className="m-auto flex min-h-80 w-full max-w-xl cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-[#bdb5a7] bg-[#fffdfa] p-10 text-center hover:bg-white">
+              <label
+                className="m-auto flex min-h-80 w-full max-w-xl cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-[#bdb5a7] bg-[#fffdfa] p-10 text-center hover:bg-white"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={handleDrop}
+              >
                 <FileUp className="mb-4 text-[#146c63]" size={42} />
                 <span className="text-lg font-semibold">Upload a PDF</span>
                 <span className="mt-2 max-w-sm text-sm text-[#69635b]">
