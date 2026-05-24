@@ -99,6 +99,10 @@ function rgbToHex(red: number, green: number, blue: number) {
   return `#${componentToHex(red)}${componentToHex(green)}${componentToHex(blue)}`;
 }
 
+function isHexColor(value: string) {
+  return /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
 function getBoxFromPoints(startX: number, startY: number, currentX: number, currentY: number) {
   return {
     x: Math.min(startX, currentX),
@@ -132,6 +136,7 @@ export function PdfEditor() {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportUrl, setExportUrl] = useState<string | null>(null);
+  const [fitAfterRender, setFitAfterRender] = useState(false);
   const [status, setStatus] = useState("Upload a PDF to start editing in your browser.");
 
   const currentOverlays = useMemo(
@@ -144,6 +149,8 @@ export function PdfEditor() {
     [overlays, selectedId],
   );
   const isPlacing = tool === "box" || tool === "text";
+  const showBoxControls = tool === "box" || tool === "pick" || selectedOverlay?.type === "box";
+  const showTextControls = tool === "text" || selectedOverlay?.type === "text";
 
   const commitOverlays = useCallback(
     (nextOverlays: Overlay[]) => {
@@ -198,9 +205,12 @@ export function PdfEditor() {
     ).toString();
 
     const proxy = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
+    const exportName = file.name
+      .replace(/\.pdf$/i, "")
+      .replace(/(?:-edited)+$/i, "");
     setPdfDocProxy(proxy);
     setPdfBytes(bytes);
-    setFileName(file.name.replace(/\.pdf$/i, "") + "-edited.pdf");
+    setFileName(`${exportName}-edited.pdf`);
     if (exportUrl) {
       URL.revokeObjectURL(exportUrl);
       setExportUrl(null);
@@ -211,6 +221,7 @@ export function PdfEditor() {
     setHistory({ past: [], future: [] });
     setSelectedId(null);
     setEditingTextId(null);
+    setFitAfterRender(true);
     setStatus(`${file.name} loaded. Pick a tool and click on the page.`);
   };
 
@@ -326,7 +337,7 @@ export function PdfEditor() {
       width,
       height,
       color: textColor,
-      text: textValue,
+      text: "",
       fontSize,
     };
 
@@ -480,6 +491,23 @@ export function PdfEditor() {
     }
   };
 
+  const updateSelectedTextColor = (color: string) => {
+    if (!isHexColor(color)) return;
+    setTextColor(color);
+    if (selectedId) {
+      setOverlays((items) =>
+        items.map((overlay) =>
+          overlay.id === selectedId && overlay.type === "text"
+            ? {
+                ...overlay,
+                color,
+              }
+            : overlay,
+        ),
+      );
+    }
+  };
+
   const fitToWidth = () => {
     if (!stageRef.current || !pageInfo) return;
     const availableWidth = stageRef.current.clientWidth - 48;
@@ -493,6 +521,19 @@ export function PdfEditor() {
     const nextZoom = Math.min(availableWidth / pageInfo.width, availableHeight / pageInfo.height);
     setZoom(Math.max(0.45, Math.min(2.5, Number(nextZoom.toFixed(2)))));
   };
+
+  useEffect(() => {
+    if (!fitAfterRender || !stageRef.current || !pageInfo) return;
+    const timeout = window.setTimeout(() => {
+      const availableWidth = stageRef.current?.clientWidth ? stageRef.current.clientWidth - 48 : pageInfo.width;
+      const availableHeight = stageRef.current?.clientHeight ? stageRef.current.clientHeight - 48 : pageInfo.height;
+      const nextZoom = Math.min(availableWidth / pageInfo.width, availableHeight / pageInfo.height);
+      setZoom(Math.max(0.55, Math.min(1.75, Number(nextZoom.toFixed(2)))));
+      setFitAfterRender(false);
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [fitAfterRender, pageInfo]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -604,8 +645,8 @@ export function PdfEditor() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#f5f3ef] text-[#211f1c]">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#ded8cc] bg-[#fffdfa] px-5 py-3">
+    <main className="flex h-screen overflow-hidden flex-col bg-[#f5f3ef] text-[#211f1c]">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-[#ded8cc] bg-[#fffdfa] px-5 py-3">
         <div>
           <h1 className="text-xl font-semibold">PDF Editor</h1>
           <p className="text-sm text-[#69635b]">Local-first visual editing for quick cleanups and covers.</p>
@@ -616,53 +657,37 @@ export function PdfEditor() {
             Upload
             <input className="sr-only" type="file" accept="application/pdf" onChange={loadPdf} />
           </label>
-          <button
-            className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-[#146c63] px-4 text-sm font-medium text-white hover:bg-[#0f5e56] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#146c63]"
-            disabled={!pdfBytes || overlays.length === 0 || isExporting}
-            type="button"
-            onClick={exportPdf}
-          >
-            <Download size={18} />
-            {isExporting ? "Exporting" : "Export"}
-          </button>
-          {exportUrl ? (
-            <a
-              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-[#146c63] bg-white px-4 text-sm font-medium text-[#146c63] hover:bg-[#e5f3ef]"
-              href={exportUrl}
-              download={fileName}
-            >
-              <Download size={18} />
-              Download ready
-            </a>
-          ) : null}
         </div>
       </header>
 
-      <section className="grid flex-1 grid-cols-1 lg:grid-cols-[280px_1fr]">
-        <aside className="border-b border-[#ded8cc] bg-[#fffdfa] p-4 lg:border-b-0 lg:border-r">
-          <div className="grid grid-cols-2 gap-2">
-            {toolOptions.map((option) => {
-              const Icon = option.icon;
-              return (
-                <button
-                  key={option.id}
-                  className={`flex h-11 items-center justify-center gap-2 rounded-md border text-sm font-medium ${
-                    tool === option.id
-                      ? "border-[#211f1c] bg-[#211f1c] text-white"
-                      : "border-[#ded8cc] bg-white text-[#211f1c] hover:bg-[#f5f3ef]"
-                  }`}
-                  type="button"
-                  onClick={() => setTool(option.id)}
-                  title={option.label}
-                >
-                  <Icon size={17} />
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
+      <section className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)]">
+        <aside className="min-h-0 overflow-auto border-r border-[#ded8cc] bg-[#fffdfa] p-3">
+          <div className="space-y-5">
+            <section>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-normal text-[#69635b]">Tools</h2>
+              <div className="grid grid-cols-2 gap-2">
+                {toolOptions.map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <button
+                      key={option.id}
+                      className={`flex h-11 items-center justify-center gap-2 rounded-md border text-sm font-medium ${
+                        tool === option.id
+                          ? "border-[#211f1c] bg-[#211f1c] text-white"
+                          : "border-[#ded8cc] bg-white text-[#211f1c] hover:bg-[#f5f3ef]"
+                      }`}
+                      type="button"
+                      onClick={() => setTool(option.id)}
+                      title={option.label}
+                    >
+                      <Icon size={17} />
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
 
-          <div className="mt-5 space-y-4">
             <div className="rounded-md border border-[#ded8cc] bg-[#f7fbfa] p-3 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium">Active tool</span>
@@ -704,85 +729,90 @@ export function PdfEditor() {
               </button>
             </div>
 
-            <label className="block text-sm font-medium">
-              Cover color
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
-                  type="color"
-                  value={pickedColor}
-                  onChange={(event) => setPickedColor(event.target.value)}
-                />
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
-                  value={pickedColor}
-                  onChange={(event) => setPickedColor(event.target.value)}
-                />
-              </div>
-            </label>
+            {(showBoxControls || showTextControls) ? (
+              <section className="space-y-3">
+                <h2 className="text-xs font-semibold uppercase tracking-normal text-[#69635b]">Style</h2>
+                {showBoxControls ? (
+                  <label className="block text-sm font-medium">
+                    Cover color
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
+                        type="color"
+                        value={pickedColor}
+                        onChange={(event) => setPickedColor(event.target.value)}
+                      />
+                      <input
+                        className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
+                        value={pickedColor}
+                        onChange={(event) => {
+                          if (isHexColor(event.target.value)) {
+                            setPickedColor(event.target.value);
+                          }
+                        }}
+                      />
+                    </div>
+                  </label>
+                ) : null}
 
-            <label className="block text-sm font-medium">
-              Text color
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
-                  type="color"
-                  value={textColor}
-                  onChange={(event) => {
-                    setTextColor(event.target.value);
-                    if (selectedOverlay?.type === "text") {
-                      updateOverlay(selectedOverlay.id, { color: event.target.value });
-                    }
-                  }}
-                />
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
-                  value={textColor}
-                  onChange={(event) => {
-                    setTextColor(event.target.value);
-                    if (selectedOverlay?.type === "text") {
-                      updateOverlay(selectedOverlay.id, { color: event.target.value });
-                    }
-                  }}
-                />
-              </div>
-            </label>
+                {showTextControls ? (
+                  <>
+                    <label className="block text-sm font-medium">
+                      Text color
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
+                          type="color"
+                          value={textColor}
+                          onChange={(event) => updateSelectedTextColor(event.target.value)}
+                        />
+                        <input
+                          className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
+                          value={textColor}
+                          onChange={(event) => updateSelectedTextColor(event.target.value)}
+                        />
+                      </div>
+                    </label>
 
-            <label className="block text-sm font-medium">
-              Text content
-              <input
-                className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
-                placeholder="Type on the page or here"
-                value={textValue}
-                onChange={(event) => {
-                  setTextValue(event.target.value);
-                  if (selectedOverlay?.type === "text") {
-                    updateOverlay(selectedOverlay.id, { text: event.target.value });
-                  }
-                }}
-              />
-            </label>
+                    <label className="block text-sm font-medium">
+                      Text content
+                      <input
+                        className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                        placeholder="Type on the page or here"
+                        value={textValue}
+                        onChange={(event) => {
+                          setTextValue(event.target.value);
+                          if (selectedOverlay?.type === "text") {
+                            updateOverlay(selectedOverlay.id, { text: event.target.value });
+                          }
+                        }}
+                      />
+                    </label>
 
-            <label className="block text-sm font-medium">
-              Font size
-              <input
-                className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
-                min={8}
-                max={96}
-                type="number"
-                value={fontSize}
-                onChange={(event) => {
-                  const nextSize = Number(event.target.value);
-                  setFontSize(nextSize);
-                  if (selectedOverlay?.type === "text") {
-                    updateOverlay(selectedOverlay.id, {
-                      fontSize: nextSize,
-                      height: Math.max(18, nextSize * 1.35),
-                    });
-                  }
-                }}
-              />
-            </label>
+                    <label className="block text-sm font-medium">
+                      Font size
+                      <input
+                        className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                        min={8}
+                        max={96}
+                        type="number"
+                        value={fontSize}
+                        onChange={(event) => {
+                          const nextSize = Number(event.target.value);
+                          setFontSize(nextSize);
+                          if (selectedOverlay?.type === "text") {
+                            updateOverlay(selectedOverlay.id, {
+                              fontSize: nextSize,
+                              height: Math.max(18, nextSize * 1.35),
+                            });
+                          }
+                        }}
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </section>
+            ) : null}
 
             <div className="flex gap-2">
               <button
@@ -829,7 +859,7 @@ export function PdfEditor() {
               </button>
             </div>
 
-            <div className="rounded-md border border-[#ded8cc] bg-white">
+            <section className="rounded-md border border-[#ded8cc] bg-white">
               <div className="flex h-10 items-center gap-2 border-b border-[#ded8cc] px-3 text-sm font-medium">
                 <List size={16} />
                 Layers
@@ -855,7 +885,7 @@ export function PdfEditor() {
                           {overlay.type === "box" ? "Box" : overlay.text?.trim() || "Text"}
                         </span>
                         <span className="shrink-0 text-xs text-[#69635b]">
-                          p{overlay.page} · {overlays.length - index}
+                          p{overlay.page} - {overlays.length - index}
                         </span>
                       </button>
                     ))}
@@ -863,7 +893,7 @@ export function PdfEditor() {
               ) : (
                 <div className="px-3 py-4 text-sm text-[#69635b]">No layers yet.</div>
               )}
-            </div>
+            </section>
 
             <button
               className="flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#ded8cc] bg-white text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
@@ -877,8 +907,8 @@ export function PdfEditor() {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-col">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] bg-[#fffdfa] px-4 py-3">
+        <section className="flex min-h-0 min-w-0 flex-col">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] bg-[#fffdfa] px-4 py-3">
             <div className="min-w-0">
               <div className="truncate text-sm text-[#69635b]">{status}</div>
               {overlays.length ? (
@@ -887,7 +917,26 @@ export function PdfEditor() {
                 </div>
               ) : null}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md bg-[#146c63] px-3 text-sm font-medium text-white hover:bg-[#0f5e56] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#146c63]"
+                disabled={!pdfBytes || overlays.length === 0 || isExporting}
+                type="button"
+                onClick={exportPdf}
+              >
+                <Download size={16} />
+                {isExporting ? "Exporting" : "Export"}
+              </button>
+              {exportUrl ? (
+                <a
+                  className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-[#146c63] bg-white px-3 text-sm font-medium text-[#146c63] hover:bg-[#e5f3ef]"
+                  href={exportUrl}
+                  download={fileName}
+                >
+                  <Download size={16} />
+                  Download ready
+                </a>
+              ) : null}
               <button
                 className="h-9 rounded-md border border-[#ded8cc] bg-white px-3 text-sm disabled:opacity-40"
                 disabled={pageNumber <= 1}
@@ -971,7 +1020,7 @@ export function PdfEditor() {
                       selectedId === overlay.id
                         ? "outline outline-2 outline-[#146c63]"
                         : overlay.type === "box"
-                          ? "outline outline-1 outline-dashed outline-[#146c63]/70"
+                          ? "outline outline-1 outline-transparent hover:outline-[#146c63]/35"
                           : "outline outline-1 outline-transparent"
                     }`}
                     style={{
@@ -987,6 +1036,10 @@ export function PdfEditor() {
                     }}
                     onPointerDown={(event) => {
                       event.stopPropagation();
+                      if (tool === "select" && selectedId === overlay.id && overlay.type === "box") {
+                        startDrag(event, overlay, "move");
+                        return;
+                      }
                       selectOverlay(overlay);
                     }}
                     onPointerMove={continueDrag}
@@ -1016,13 +1069,12 @@ export function PdfEditor() {
                     {selectedId === overlay.id ? (
                       <>
                         <div
-                          className="absolute -top-7 left-0 flex h-6 cursor-move items-center rounded bg-[#146c63] px-2 text-[11px] font-semibold text-white shadow-sm"
+                          className="absolute -top-2 -left-2 h-4 w-4 cursor-move rounded-sm border border-white bg-[#146c63] shadow-sm"
+                          title="Drag to move"
                           onPointerDown={(event) => startDrag(event, overlay, "move")}
                           onPointerMove={continueDrag}
                           onPointerUp={() => setDragState(null)}
-                        >
-                          Move
-                        </div>
+                        />
                         <div
                           className="absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-white bg-[#146c63]"
                           onPointerDown={(event) => startDrag(event, overlay, "resize")}
