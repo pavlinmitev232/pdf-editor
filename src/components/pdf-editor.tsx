@@ -14,6 +14,7 @@ import {
   Palette,
   Redo2,
   Square,
+  Move,
   Trash2,
   Type,
   Undo2,
@@ -547,7 +548,7 @@ export function PdfEditor() {
       setTextValue(overlay.text || "");
       setTextColor(overlay.color);
       setFontSize(overlay.fontSize || 18);
-      setStatus("Text selected. Type directly on the page to edit it.");
+      setStatus("Text selected. Type on the page, or drag the Move handle to reposition it.");
     } else {
       setStatus("Box selected. Drag it, resize it, or delete it.");
     }
@@ -1217,16 +1218,19 @@ export function PdfEditor() {
                     {!previewMode && selectedId === overlay.id ? (
                       <>
                         <div
-                          className="absolute -top-2 -left-2 h-4 w-4 cursor-move rounded-sm border border-white bg-[#146c63] shadow-sm"
+                          className="absolute -top-8 left-1/2 z-30 flex h-7 -translate-x-1/2 cursor-move items-center gap-1 rounded-md border border-white bg-[#146c63] px-2 text-xs font-semibold text-white shadow-sm"
                           title="Drag to move"
                           onPointerDown={(event) => startDrag(event, overlay, "move")}
                           onPointerMove={continueDrag}
                           onPointerUp={() => setDragState(null)}
-                        />
+                        >
+                          <Move size={13} />
+                          Move
+                        </div>
                         {resizeHandles.map((handle) => (
                           <div
                             key={handle.mode}
-                            className={`absolute h-3.5 w-3.5 rounded-sm border border-white bg-[#146c63] shadow-sm ${handle.className} ${handle.cursor}`}
+                            className={`absolute z-30 h-3.5 w-3.5 rounded-sm border border-white bg-[#146c63] shadow-sm ${handle.className} ${handle.cursor}`}
                             onPointerDown={(event) => startDrag(event, overlay, handle.mode)}
                             onPointerMove={continueDrag}
                             onPointerUp={() => setDragState(null)}
