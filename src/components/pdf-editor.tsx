@@ -231,6 +231,8 @@ export function PdfEditor() {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [showSignaturePad, setShowSignaturePad] = useState(false);
   const [isDrawingSignature, setIsDrawingSignature] = useState(false);
+  const [imageWidthValue, setImageWidthValue] = useState("");
+  const [isEditingImageWidth, setIsEditingImageWidth] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [fitAfterRender, setFitAfterRender] = useState(false);
@@ -1021,6 +1023,17 @@ export function PdfEditor() {
     updateSelectedImageWidth(selectedOverlay.width * scale);
   };
 
+  const applyImageWidthInput = () => {
+    if (!selectedOverlay || selectedOverlay.type !== "image") return;
+
+    const nextWidth = Number(isEditingImageWidth ? imageWidthValue : Math.round(selectedOverlay.width));
+    if (Number.isFinite(nextWidth)) {
+      updateSelectedImageWidth(nextWidth);
+    }
+    setIsEditingImageWidth(false);
+    setImageWidthValue("");
+  };
+
   const duplicateSelected = useCallback(() => {
     if (!selectedOverlay || !pageInfo) return;
     const offset = 18;
@@ -1544,9 +1557,23 @@ export function PdfEditor() {
                         min={24}
                         max={pageInfo?.width || 1000}
                         type="number"
-                        value={Math.round(selectedOverlay?.width || 0)}
-                        onFocus={recordHistory}
-                        onChange={(event) => updateSelectedImageWidth(Number(event.target.value))}
+                        value={
+                          isEditingImageWidth
+                            ? imageWidthValue
+                            : String(Math.round(selectedOverlay?.width || 0))
+                        }
+                        onBlur={applyImageWidthInput}
+                        onFocus={() => {
+                          recordHistory();
+                          setIsEditingImageWidth(true);
+                          setImageWidthValue(String(Math.round(selectedOverlay?.width || 0)));
+                        }}
+                        onChange={(event) => setImageWidthValue(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
                       />
                     </label>
                   </>
