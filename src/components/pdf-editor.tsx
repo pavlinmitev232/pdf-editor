@@ -40,6 +40,7 @@ type Overlay = {
   fontSize?: number;
   imageData?: string;
   imageLabel?: string;
+  lineOrientation?: "horizontal" | "vertical" | "down" | "up";
   lineDirection?: "down" | "up";
   strokeWidth?: number;
 };
@@ -135,6 +136,43 @@ function getBoxFromPoints(startX: number, startY: number, currentX: number, curr
     y: Math.min(startY, currentY),
     width: Math.abs(currentX - startX),
     height: Math.abs(currentY - startY),
+  };
+}
+
+function getLineFromPoints(startX: number, startY: number, currentX: number, currentY: number, thickness: number) {
+  const dx = currentX - startX;
+  const dy = currentY - startY;
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+  const minThickness = Math.max(2, thickness);
+
+  if (absX >= absY * 2) {
+    return {
+      x: Math.min(startX, currentX),
+      y: startY - minThickness / 2,
+      width: Math.max(2, absX),
+      height: minThickness,
+      orientation: "horizontal" as const,
+    };
+  }
+
+  if (absY >= absX * 2) {
+    return {
+      x: startX - minThickness / 2,
+      y: Math.min(startY, currentY),
+      width: minThickness,
+      height: Math.max(2, absY),
+      orientation: "vertical" as const,
+    };
+  }
+
+  const side = Math.max(absX, absY);
+  return {
+    x: dx >= 0 ? startX : startX - side,
+    y: dy >= 0 ? startY : startY - side,
+    width: Math.max(2, side),
+    height: Math.max(2, side),
+    orientation: dy * dx >= 0 ? ("down" as const) : ("up" as const),
   };
 }
 
@@ -601,12 +639,13 @@ export function PdfEditor() {
       return;
     }
 
-    const lineBox = {
-      x: Math.min(drawingState.startX, drawingState.currentX),
-      y: Math.min(drawingState.startY, drawingState.currentY),
-      width: Math.max(2, Math.abs(drawingState.currentX - drawingState.startX)),
-      height: Math.max(2, Math.abs(drawingState.currentY - drawingState.startY)),
-    };
+    const lineBox = getLineFromPoints(
+      drawingState.startX,
+      drawingState.startY,
+      drawingState.currentX,
+      drawingState.currentY,
+      strokeWidth,
+    );
     const activeBox = tool === "line" ? lineBox : box;
     const baseOverlay = {
       id: crypto.randomUUID(),
@@ -629,7 +668,8 @@ export function PdfEditor() {
             ...baseOverlay,
             type: "line",
             color: pickedColor,
-            lineDirection: drawingState.currentY >= drawingState.startY ? "down" : "up",
+            lineDirection: lineBox.orientation === "up" ? "up" : "down",
+            lineOrientation: lineBox.orientation,
             strokeWidth,
           }
         : copiedImage
@@ -919,15 +959,26 @@ export function PdfEditor() {
           });
         } else if (overlay.type === "line") {
           const color = hexToRgb(overlay.color);
+          const orientation = overlay.lineOrientation || overlay.lineDirection || "down";
           page.drawLine({
-            start: {
-              x,
-              y: overlay.lineDirection === "up" ? y : y + overlay.height * scaleY,
-            },
-            end: {
-              x: x + overlay.width * scaleX,
-              y: overlay.lineDirection === "up" ? y + overlay.height * scaleY : y,
-            },
+            start:
+              orientation === "horizontal"
+                ? { x, y: y + (overlay.height * scaleY) / 2 }
+                : orientation === "vertical"
+                  ? { x: x + (overlay.width * scaleX) / 2, y }
+                  : {
+                      x,
+                      y: orientation === "up" ? y : y + overlay.height * scaleY,
+                    },
+            end:
+              orientation === "horizontal"
+                ? { x: x + overlay.width * scaleX, y: y + (overlay.height * scaleY) / 2 }
+                : orientation === "vertical"
+                  ? { x: x + (overlay.width * scaleX) / 2, y: y + overlay.height * scaleY }
+                  : {
+                      x: x + overlay.width * scaleX,
+                      y: orientation === "up" ? y + overlay.height * scaleY : y,
+                    },
             thickness: (overlay.strokeWidth || 3) * scaleY,
             color: rgb(color.r, color.g, color.b),
           });
@@ -1409,36 +1460,97 @@ export function PdfEditor() {
                 ) : null}
                 {!previewMode && drawingState ? (
                   <div
-                    className="pointer-events-none absolute z-10 border-2 border-dashed border-[#146c63] bg-[#146c63]/15"
+                    className={`pointer-events-none absolute z-10 ${
+                      tool === "line" ? "" : "border-2 border-dashed border-[#146c63] bg-[#146c63]/15"
+                    }`}
                     style={{
-                      left: getBoxFromPoints(
-                        drawingState.startX,
-                        drawingState.startY,
-                        drawingState.currentX,
-                        drawingState.currentY,
-                      ).x * zoom,
-                      top: getBoxFromPoints(
-                        drawingState.startX,
-                        drawingState.startY,
-                        drawingState.currentX,
-                        drawingState.currentY,
-                      ).y * zoom,
+                      left:
+                        (tool === "line"
+                          ? getLineFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                              strokeWidth,
+                            ).x
+                          : getBoxFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                            ).x) * zoom,
+                      top:
+                        (tool === "line"
+                          ? getLineFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                              strokeWidth,
+                            ).y
+                          : getBoxFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                            ).y) * zoom,
                       width:
-                        getBoxFromPoints(
-                          drawingState.startX,
-                          drawingState.startY,
-                          drawingState.currentX,
-                          drawingState.currentY,
-                        ).width * zoom,
+                        (tool === "line"
+                          ? getLineFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                              strokeWidth,
+                            ).width
+                          : getBoxFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                            ).width) * zoom,
                       height:
-                        getBoxFromPoints(
-                          drawingState.startX,
-                          drawingState.startY,
-                          drawingState.currentX,
-                          drawingState.currentY,
-                        ).height * zoom,
+                        (tool === "line"
+                          ? getLineFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                              strokeWidth,
+                            ).height
+                          : getBoxFromPoints(
+                              drawingState.startX,
+                              drawingState.startY,
+                              drawingState.currentX,
+                              drawingState.currentY,
+                            ).height) * zoom,
                     }}
-                  />
+                  >
+                    {tool === "line" ? (
+                      <svg className="h-full w-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                        {(() => {
+                          const previewLine = getLineFromPoints(
+                            drawingState.startX,
+                            drawingState.startY,
+                            drawingState.currentX,
+                            drawingState.currentY,
+                            strokeWidth,
+                          );
+                          return (
+                            <line
+                              stroke="#146c63"
+                              strokeLinecap="round"
+                              strokeWidth={Math.max(1, ((strokeWidth || 3) / Math.max(previewLine.width, previewLine.height)) * 100)}
+                              x1={previewLine.orientation === "vertical" ? "50" : "0"}
+                              x2={previewLine.orientation === "vertical" ? "50" : "100"}
+                              y1={previewLine.orientation === "horizontal" ? "50" : previewLine.orientation === "up" ? "100" : "0"}
+                              y2={previewLine.orientation === "horizontal" ? "50" : previewLine.orientation === "up" ? "0" : "100"}
+                            />
+                          );
+                        })()}
+                      </svg>
+                    ) : null}
+                  </div>
                 ) : null}
                 {currentOverlays.map((overlay) => (
                   <div
@@ -1481,10 +1593,10 @@ export function PdfEditor() {
                           stroke={overlay.color}
                           strokeLinecap="round"
                           strokeWidth={Math.max(1, ((overlay.strokeWidth || 3) / Math.max(overlay.width, overlay.height)) * 100)}
-                          x1="0"
-                          x2="100"
-                          y1={overlay.lineDirection === "up" ? "100" : "0"}
-                          y2={overlay.lineDirection === "up" ? "0" : "100"}
+                          x1={overlay.lineOrientation === "vertical" ? "50" : "0"}
+                          x2={overlay.lineOrientation === "vertical" ? "50" : "100"}
+                          y1={overlay.lineOrientation === "horizontal" ? "50" : overlay.lineOrientation === "up" ? "100" : "0"}
+                          y2={overlay.lineOrientation === "horizontal" ? "50" : overlay.lineOrientation === "up" ? "0" : "100"}
                         />
                       </svg>
                     ) : overlay.type === "text" ? (
