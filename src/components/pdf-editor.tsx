@@ -8,8 +8,10 @@ import {
   Eye,
   EyeOff,
   FileUp,
+  ImagePlus,
   List,
   Maximize,
+  Minus,
   MousePointer2,
   Palette,
   Redo2,
@@ -23,12 +25,12 @@ import {
 } from "lucide-react";
 import { siteConfig } from "@/lib/site";
 
-type Tool = "select" | "pick" | "box" | "text" | "clone";
+type Tool = "select" | "pick" | "box" | "line" | "text" | "clone";
 
 type Overlay = {
   id: string;
   page: number;
-  type: "box" | "text" | "image";
+  type: "box" | "line" | "text" | "image";
   x: number;
   y: number;
   width: number;
@@ -37,6 +39,9 @@ type Overlay = {
   text?: string;
   fontSize?: number;
   imageData?: string;
+  imageLabel?: string;
+  lineDirection?: "down" | "up";
+  strokeWidth?: number;
 };
 
 type PageInfo = {
@@ -83,6 +88,7 @@ const toolOptions: Array<{ id: Tool; label: string; icon: React.ComponentType<{ 
   { id: "select", label: "Select", icon: MousePointer2 },
   { id: "pick", label: "Pick color", icon: Palette },
   { id: "box", label: "Box", icon: Square },
+  { id: "line", label: "Line", icon: Minus },
   { id: "text", label: "Text", icon: Type },
   { id: "clone", label: "Copy area", icon: Copy },
 ];
@@ -132,6 +138,30 @@ function getBoxFromPoints(startX: number, startY: number, currentX: number, curr
   };
 }
 
+function loadImageFromDataUrl(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Image could not be loaded."));
+    image.src = dataUrl;
+  });
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("File could not be read."));
+    };
+    reader.onerror = () => reject(new Error("File could not be read."));
+    reader.readAsDataURL(file);
+  });
+}
+
 export function PdfEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -147,6 +177,7 @@ export function PdfEditor() {
   const [textColor, setTextColor] = useState("#111111");
   const [textValue, setTextValue] = useState("");
   const [fontSize, setFontSize] = useState(18);
+  const [strokeWidth, setStrokeWidth] = useState(3);
   const [zoom, setZoom] = useState(1);
   const [overlays, setOverlays] = useState<Overlay[]>([]);
   const [history, setHistory] = useState<HistoryState>({ past: [], future: [] });
@@ -169,8 +200,13 @@ export function PdfEditor() {
     () => overlays.find((overlay) => overlay.id === selectedId) || null,
     [overlays, selectedId],
   );
-  const isPlacing = tool === "box" || tool === "text" || tool === "clone";
-  const showBoxControls = tool === "box" || tool === "pick" || selectedOverlay?.type === "box";
+  const isPlacing = tool === "box" || tool === "line" || tool === "text" || tool === "clone";
+  const showShapeControls =
+    tool === "box" ||
+    tool === "line" ||
+    tool === "pick" ||
+    selectedOverlay?.type === "box" ||
+    selectedOverlay?.type === "line";
   const showTextControls = tool === "text" || selectedOverlay?.type === "text";
 
   const commitOverlays = useCallback(
@@ -395,6 +431,110 @@ export function PdfEditor() {
     return copyCanvas.toDataURL("image/png");
   };
 
+  const prepareSignatureImage = async (file: File) => {
+    const dataUrl = await readFileAsDataUrl(file);
+    const image = await loadImageFromDataUrl(dataUrl);
+    const sourceCanvas = document.createElement("canvas");
+    const maxSide = 1200;
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+    sourceCanvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    sourceCanvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+    if (!sourceContext) throw new Error("Could not scan the signature image.");
+
+    sourceContext.drawImage(image, 0, 0, sourceCanvas.width, sourceCanvas.height);
+    const imageData = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+    const pixels = imageData.data;
+    let minX = sourceCanvas.width;
+    let minY = sourceCanvas.height;
+    let maxX = 0;
+    let maxY = 0;
+    let hasInk = false;
+
+    for (let y = 0; y < sourceCanvas.height; y += 1) {
+      for (let x = 0; x < sourceCanvas.width; x += 1) {
+        const index = (y * sourceCanvas.width + x) * 4;
+        const red = pixels[index];
+        const green = pixels[index + 1];
+        const blue = pixels[index + 2];
+        const darkness = 255 - (red + green + blue) / 3;
+        const alpha = Math.max(0, Math.min(255, (darkness - 28) * 4));
+
+        pixels[index] = 17;
+        pixels[index + 1] = 17;
+        pixels[index + 2] = 17;
+        pixels[index + 3] = alpha;
+
+        if (alpha > 18) {
+          hasInk = true;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+    }
+
+    if (!hasInk) throw new Error("No signature ink was detected.");
+
+    sourceContext.putImageData(imageData, 0, 0);
+    const padding = 8;
+    const cropX = Math.max(0, minX - padding);
+    const cropY = Math.max(0, minY - padding);
+    const cropRight = Math.min(sourceCanvas.width, maxX + padding);
+    const cropBottom = Math.min(sourceCanvas.height, maxY + padding);
+    const cropWidth = Math.max(1, cropRight - cropX);
+    const cropHeight = Math.max(1, cropBottom - cropY);
+    const outputCanvas = document.createElement("canvas");
+    outputCanvas.width = cropWidth;
+    outputCanvas.height = cropHeight;
+
+    const outputContext = outputCanvas.getContext("2d");
+    if (!outputContext) throw new Error("Could not crop the signature image.");
+    outputContext.drawImage(sourceCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+    return {
+      dataUrl: outputCanvas.toDataURL("image/png"),
+      width: cropWidth / scale,
+      height: cropHeight / scale,
+    };
+  };
+
+  const addSignatureOverlay = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !pageInfo) return;
+
+    try {
+      setStatus("Scanning signature and removing the paper background...");
+      const signature = await prepareSignatureImage(file);
+      const maxWidth = pageInfo.width * 0.35;
+      const width = Math.max(80, Math.min(maxWidth, signature.width * 0.35));
+      const height = Math.max(28, width * (signature.height / signature.width));
+      const overlay: Overlay = {
+        id: crypto.randomUUID(),
+        page: pageNumber,
+        type: "image",
+        x: Math.max(0, (pageInfo.width - width) / 2),
+        y: Math.max(0, (pageInfo.height - height) / 2),
+        width,
+        height,
+        color: "#111111",
+        imageData: signature.dataUrl,
+        imageLabel: "Signature",
+      };
+
+      commitOverlays([...overlays, overlay]);
+      setSelectedId(overlay.id);
+      setEditingTextId(null);
+      setTool("select");
+      setStatus("Signature scanned. Drag the Move handle to place it.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not scan that signature image.");
+    }
+  };
+
   const handlePagePointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!pdfDocProxy) return;
     setEditingTextId(null);
@@ -402,7 +542,7 @@ export function PdfEditor() {
       pickCanvasColor(event);
       return;
     }
-    if (tool === "box") {
+    if (tool === "box" || tool === "line") {
       const point = getPagePoint(event);
       setDrawingState({
         startX: point.x,
@@ -410,7 +550,7 @@ export function PdfEditor() {
         currentX: point.x,
         currentY: point.y,
       });
-      setStatus("Drag to draw a cover box.");
+      setStatus(tool === "line" ? "Drag to draw a line." : "Drag to draw a cover box.");
       return;
     }
     if (tool === "clone") {
@@ -452,18 +592,29 @@ export function PdfEditor() {
 
     setDrawingState(null);
 
-    if (box.width < 6 || box.height < 6) {
-      setStatus("Drag on the page to draw a cover box.");
+    const lineLength = Math.hypot(
+      drawingState.currentX - drawingState.startX,
+      drawingState.currentY - drawingState.startY,
+    );
+    if (tool === "line" ? lineLength < 6 : box.width < 6 || box.height < 6) {
+      setStatus(tool === "line" ? "Drag on the page to draw a line." : "Drag on the page to draw a cover box.");
       return;
     }
 
+    const lineBox = {
+      x: Math.min(drawingState.startX, drawingState.currentX),
+      y: Math.min(drawingState.startY, drawingState.currentY),
+      width: Math.max(2, Math.abs(drawingState.currentX - drawingState.startX)),
+      height: Math.max(2, Math.abs(drawingState.currentY - drawingState.startY)),
+    };
+    const activeBox = tool === "line" ? lineBox : box;
     const baseOverlay = {
       id: crypto.randomUUID(),
       page: pageNumber,
-      x: Math.max(0, Math.min(pageInfo.width - box.width, box.x)),
-      y: Math.max(0, Math.min(pageInfo.height - box.height, box.y)),
-      width: box.width,
-      height: box.height,
+      x: Math.max(0, Math.min(pageInfo.width - activeBox.width, activeBox.x)),
+      y: Math.max(0, Math.min(pageInfo.height - activeBox.height, activeBox.y)),
+      width: activeBox.width,
+      height: activeBox.height,
     };
 
     const copiedImage = tool === "clone" ? copyCanvasArea(box) : null;
@@ -472,23 +623,39 @@ export function PdfEditor() {
       return;
     }
 
-    const overlay: Overlay = copiedImage
-      ? {
-          ...baseOverlay,
-          type: "image",
-          color: "#000000",
-          imageData: copiedImage,
-        }
-      : {
-          ...baseOverlay,
-          type: "box",
-          color: pickedColor,
-        };
+    const overlay: Overlay =
+      tool === "line"
+        ? {
+            ...baseOverlay,
+            type: "line",
+            color: pickedColor,
+            lineDirection: drawingState.currentY >= drawingState.startY ? "down" : "up",
+            strokeWidth,
+          }
+        : copiedImage
+          ? {
+              ...baseOverlay,
+              type: "image",
+              color: "#000000",
+              imageData: copiedImage,
+              imageLabel: "Copied area",
+            }
+          : {
+              ...baseOverlay,
+              type: "box",
+              color: pickedColor,
+            };
 
     commitOverlays([...overlays, overlay]);
     setSelectedId(overlay.id);
     setTool("select");
-    setStatus(copiedImage ? "Area copied. Drag the Move handle to place it." : "Box added. The dashed outline is only visible in the editor.");
+    setStatus(
+      tool === "line"
+        ? "Line added. Drag the Move handle or resize endpoints."
+        : copiedImage
+          ? "Area copied. Drag the Move handle to place it."
+          : "Box added. The dashed outline is only visible in the editor.",
+    );
   };
 
   const startDrag = (event: PointerEvent<HTMLDivElement>, overlay: Overlay, mode: DragState["mode"]) => {
@@ -587,7 +754,13 @@ export function PdfEditor() {
       setFontSize(overlay.fontSize || 18);
       setStatus("Text selected. Type on the page, or drag the Move handle to reposition it.");
     } else {
-      setStatus(`${overlay.type === "image" ? "Copied area" : "Box"} selected. Drag it, resize it, or delete it.`);
+      if (overlay.type === "box" || overlay.type === "line") {
+        setPickedColor(overlay.color);
+      }
+      if (overlay.type === "line") {
+        setStrokeWidth(overlay.strokeWidth || 3);
+      }
+      setStatus(`${overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.type === "line" ? "Line" : "Box"} selected. Drag it, resize it, or delete it.`);
     }
   };
 
@@ -602,8 +775,16 @@ export function PdfEditor() {
   const updateSelectedBoxColor = (color: string) => {
     if (!isHexColor(color)) return;
     setPickedColor(color);
-    if (selectedOverlay?.type === "box") {
+    if (selectedOverlay?.type === "box" || selectedOverlay?.type === "line") {
       updateOverlay(selectedOverlay.id, { color });
+    }
+  };
+
+  const updateSelectedStrokeWidth = (value: number) => {
+    const nextStrokeWidth = Math.max(1, Math.min(24, value));
+    setStrokeWidth(nextStrokeWidth);
+    if (selectedOverlay?.type === "line") {
+      updateOverlay(selectedOverlay.id, { strokeWidth: nextStrokeWidth });
     }
   };
 
@@ -620,7 +801,7 @@ export function PdfEditor() {
     commitOverlays([...overlays, duplicate]);
     setSelectedId(duplicate.id);
     setEditingTextId(duplicate.type === "text" ? duplicate.id : null);
-    setStatus(`${duplicate.type === "box" ? "Box" : duplicate.type === "image" ? "Copied area" : "Text"} duplicated.`);
+    setStatus(`${duplicate.type === "box" ? "Box" : duplicate.type === "line" ? "Line" : duplicate.type === "image" ? duplicate.imageLabel || "Image" : "Text"} duplicated.`);
   }, [commitOverlays, overlays, pageInfo, selectedOverlay]);
 
   const handleDrop = async (event: DragEvent<HTMLElement>) => {
@@ -735,6 +916,20 @@ export function PdfEditor() {
             color: rgb(color.r, color.g, color.b),
             borderColor: rgb(color.r, color.g, color.b),
             borderWidth: 0,
+          });
+        } else if (overlay.type === "line") {
+          const color = hexToRgb(overlay.color);
+          page.drawLine({
+            start: {
+              x,
+              y: overlay.lineDirection === "up" ? y : y + overlay.height * scaleY,
+            },
+            end: {
+              x: x + overlay.width * scaleX,
+              y: overlay.lineDirection === "up" ? y + overlay.height * scaleY : y,
+            },
+            thickness: (overlay.strokeWidth || 3) * scaleY,
+            color: rgb(color.r, color.g, color.b),
           });
         } else if (overlay.text) {
           const color = hexToRgb(overlay.color);
@@ -860,9 +1055,9 @@ export function PdfEditor() {
                 {tool === "pick"
                   ? "Click the PDF to sample a pixel color."
                   : isPlacing
-                    ? `${tool === "box" ? "Drag on the PDF to draw a cover box." : tool === "clone" ? "Drag around an area to copy it." : "Click the PDF to place editable text."}`
+                    ? `${tool === "box" ? "Drag on the PDF to draw a cover box." : tool === "line" ? "Drag on the PDF to draw a line." : tool === "clone" ? "Drag around an area to copy it." : "Click the PDF to place editable text."}`
                     : selectedOverlay
-                      ? `${selectedOverlay.type === "box" ? "Box" : selectedOverlay.type === "image" ? "Copied area" : "Text"} selected.`
+                      ? `${selectedOverlay.type === "box" ? "Box" : selectedOverlay.type === "line" ? "Line" : selectedOverlay.type === "image" ? selectedOverlay.imageLabel || "Image" : "Text"} selected.`
                       : "Click an item to select it."}
               </p>
             </div>
@@ -901,12 +1096,29 @@ export function PdfEditor() {
               Duplicate selected
             </button>
 
-            {(showBoxControls || showTextControls) ? (
+            <label
+              className={`flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#ded8cc] bg-white text-sm font-medium ${
+                pageInfo ? "cursor-pointer hover:bg-[#f5f3ef]" : "cursor-not-allowed opacity-40"
+              }`}
+              title="Scan signature image"
+            >
+              <ImagePlus size={17} />
+              Scan signature
+              <input
+                className="sr-only"
+                type="file"
+                accept="image/*"
+                disabled={!pageInfo}
+                onChange={addSignatureOverlay}
+              />
+            </label>
+
+            {(showShapeControls || showTextControls) ? (
               <section className="space-y-3">
                 <h2 className="text-xs font-semibold uppercase tracking-normal text-[#69635b]">Style</h2>
-                {showBoxControls ? (
+                {showShapeControls ? (
                   <label className="block text-sm font-medium">
-                    Cover color
+                    {selectedOverlay?.type === "line" || tool === "line" ? "Shape color" : "Cover color"}
                     <div className="mt-2 flex items-center gap-2">
                       <input
                         className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
@@ -926,6 +1138,21 @@ export function PdfEditor() {
                         }}
                       />
                     </div>
+                  </label>
+                ) : null}
+
+                {selectedOverlay?.type === "line" || tool === "line" ? (
+                  <label className="block text-sm font-medium">
+                    Line thickness
+                    <input
+                      className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                      min={1}
+                      max={24}
+                      type="number"
+                      value={strokeWidth}
+                      onFocus={recordHistory}
+                      onChange={(event) => updateSelectedStrokeWidth(Number(event.target.value))}
+                    />
                   </label>
                 ) : null}
 
@@ -1060,7 +1287,7 @@ export function PdfEditor() {
                         }}
                       >
                         <span className="truncate">
-                          {overlay.type === "box" ? "Box" : overlay.type === "image" ? "Copied area" : overlay.text?.trim() || "Text"}
+                          {overlay.type === "box" ? "Box" : overlay.type === "line" ? "Line" : overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.text?.trim() || "Text"}
                         </span>
                         <span className="shrink-0 text-xs text-[#69635b]">
                           p{overlay.page} - {overlays.length - index}
@@ -1177,7 +1404,7 @@ export function PdfEditor() {
                 <canvas ref={canvasRef} className="absolute inset-0 bg-white" />
                 {!previewMode && isPlacing ? (
                   <div className="pointer-events-none absolute left-3 top-3 z-20 rounded-md border border-[#146c63] bg-white/95 px-3 py-2 text-xs font-semibold text-[#146c63] shadow-sm">
-                    {tool === "box" ? "Drag to draw box" : tool === "clone" ? "Drag to copy area" : "Click to place text"}
+                    {tool === "box" ? "Drag to draw box" : tool === "line" ? "Drag to draw line" : tool === "clone" ? "Drag to copy area" : "Click to place text"}
                   </div>
                 ) : null}
                 {!previewMode && drawingState ? (
@@ -1221,7 +1448,7 @@ export function PdfEditor() {
                         ? "outline outline-1 outline-transparent"
                         : selectedId === overlay.id
                         ? "outline outline-2 outline-[#146c63]"
-                        : overlay.type === "box" || overlay.type === "image"
+                        : overlay.type === "box" || overlay.type === "line" || overlay.type === "image"
                           ? "outline outline-1 outline-transparent hover:outline-[#146c63]/35"
                           : "outline outline-1 outline-transparent"
                     }`}
@@ -1248,7 +1475,19 @@ export function PdfEditor() {
                     onPointerMove={continueDrag}
                     onPointerUp={() => setDragState(null)}
                   >
-                    {overlay.type === "text" ? (
+                    {overlay.type === "line" ? (
+                      <svg className="h-full w-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                        <line
+                          stroke={overlay.color}
+                          strokeLinecap="round"
+                          strokeWidth={Math.max(1, ((overlay.strokeWidth || 3) / Math.max(overlay.width, overlay.height)) * 100)}
+                          x1="0"
+                          x2="100"
+                          y1={overlay.lineDirection === "up" ? "100" : "0"}
+                          y2={overlay.lineDirection === "up" ? "0" : "100"}
+                        />
+                      </svg>
+                    ) : overlay.type === "text" ? (
                       editingTextId === overlay.id ? (
                         <textarea
                           autoFocus
