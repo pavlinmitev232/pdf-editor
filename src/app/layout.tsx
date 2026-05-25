@@ -67,6 +67,8 @@ export default function RootLayout({
       "Add text to PDF pages",
       "Cover PDF content with color-matched boxes",
       "Pick colors from rendered PDF pages",
+      "Draw lines, arrows, and highlights",
+      "Add drawn or scanned signatures",
       "Export edited PDF files",
     ],
   };

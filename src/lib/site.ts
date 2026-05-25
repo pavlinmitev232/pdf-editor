@@ -31,6 +31,21 @@ export const seoPages = [
     title: "PDF Color Picker",
     description: "Sample colors from the rendered PDF page so cover boxes blend into the original document.",
   },
+  {
+    href: "/sign-pdf-online",
+    title: "Sign PDF Online",
+    description: "Draw or upload a signature, place it on a PDF, resize it, and export the signed document.",
+  },
+  {
+    href: "/draw-on-pdf",
+    title: "Draw on PDF",
+    description: "Add lines, arrows, signatures, and visual annotations to a PDF directly in your browser.",
+  },
+  {
+    href: "/highlight-pdf-online",
+    title: "Highlight PDF Online",
+    description: "Highlight text or areas in a PDF with a translucent marker-style overlay.",
+  },
 ];
 
 export const allSitePaths = [
@@ -50,4 +65,3 @@ export const allSitePaths = [
   "/copyright",
   "/disclaimer",
 ];
-

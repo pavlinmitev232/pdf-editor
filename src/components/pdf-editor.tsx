@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import {
+  ArrowUpRight,
   Copy,
   Download,
   Eye,
@@ -17,20 +18,22 @@ import {
   Redo2,
   Square,
   Move,
+  PenLine,
   Trash2,
   Type,
   Undo2,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { siteConfig } from "@/lib/site";
 
-type Tool = "select" | "pick" | "box" | "line" | "text" | "clone";
+type Tool = "select" | "pick" | "box" | "highlight" | "line" | "arrow" | "text" | "clone";
 
 type Overlay = {
   id: string;
   page: number;
-  type: "box" | "line" | "text" | "image";
+  type: "box" | "highlight" | "line" | "arrow" | "text" | "image";
   x: number;
   y: number;
   width: number;
@@ -89,7 +92,9 @@ const toolOptions: Array<{ id: Tool; label: string; icon: React.ComponentType<{ 
   { id: "select", label: "Select", icon: MousePointer2 },
   { id: "pick", label: "Pick color", icon: Palette },
   { id: "box", label: "Box", icon: Square },
+  { id: "highlight", label: "Highlight", icon: PenLine },
   { id: "line", label: "Line", icon: Minus },
+  { id: "arrow", label: "Arrow", icon: ArrowUpRight },
   { id: "text", label: "Text", icon: Type },
   { id: "clone", label: "Copy area", icon: Copy },
 ];
@@ -202,6 +207,7 @@ function readFileAsDataUrl(file: File) {
 
 export function PdfEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
   const [pdfDocProxy, setPdfDocProxy] = useState<PdfDocumentProxy | null>(null);
@@ -223,6 +229,8 @@ export function PdfEditor() {
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [drawingState, setDrawingState] = useState<DrawingState | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [showSignaturePad, setShowSignaturePad] = useState(false);
+  const [isDrawingSignature, setIsDrawingSignature] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [fitAfterRender, setFitAfterRender] = useState(false);
@@ -238,19 +246,31 @@ export function PdfEditor() {
     () => overlays.find((overlay) => overlay.id === selectedId) || null,
     [overlays, selectedId],
   );
-  const isPlacing = tool === "box" || tool === "line" || tool === "text" || tool === "clone";
+  const isPlacing =
+    tool === "box" ||
+    tool === "highlight" ||
+    tool === "line" ||
+    tool === "arrow" ||
+    tool === "text" ||
+    tool === "clone";
   const showShapeControls =
     tool === "box" ||
+    tool === "highlight" ||
     tool === "line" ||
+    tool === "arrow" ||
     tool === "pick" ||
     selectedOverlay?.type === "box" ||
-    selectedOverlay?.type === "line";
+    selectedOverlay?.type === "highlight" ||
+    selectedOverlay?.type === "line" ||
+    selectedOverlay?.type === "arrow";
   const showTextControls = tool === "text" || selectedOverlay?.type === "text";
 
   const selectTool = (nextTool: Tool) => {
     setTool(nextTool);
-    if (nextTool === "line") {
+    if (nextTool === "line" || nextTool === "arrow") {
       setPickedColor("#111111");
+    } else if (nextTool === "highlight") {
+      setPickedColor("#ffe66d");
     }
   };
 
@@ -580,6 +600,118 @@ export function PdfEditor() {
     }
   };
 
+  const getSignaturePoint = (event: PointerEvent<HTMLCanvasElement>) => {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+    };
+  };
+
+  const beginDrawSignature = (event: PointerEvent<HTMLCanvasElement>) => {
+    const canvas = event.currentTarget;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    const point = getSignaturePoint(event);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = 4;
+    context.strokeStyle = "#111111";
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+    canvas.setPointerCapture(event.pointerId);
+    setIsDrawingSignature(true);
+  };
+
+  const continueDrawSignature = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingSignature) return;
+
+    const context = event.currentTarget.getContext("2d");
+    if (!context) return;
+
+    const point = getSignaturePoint(event);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+  };
+
+  const clearSignaturePad = () => {
+    const canvas = signatureCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const addDrawnSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas || !pageInfo) return;
+
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+    let minX = canvas.width;
+    let minY = canvas.height;
+    let maxX = 0;
+    let maxY = 0;
+    let hasInk = false;
+
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const alpha = pixels[(y * canvas.width + x) * 4 + 3];
+        if (alpha > 0) {
+          hasInk = true;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+    }
+
+    if (!hasInk) {
+      setStatus("Draw your signature first.");
+      return;
+    }
+
+    const padding = 10;
+    const cropX = Math.max(0, minX - padding);
+    const cropY = Math.max(0, minY - padding);
+    const cropRight = Math.min(canvas.width, maxX + padding);
+    const cropBottom = Math.min(canvas.height, maxY + padding);
+    const cropWidth = Math.max(1, cropRight - cropX);
+    const cropHeight = Math.max(1, cropBottom - cropY);
+    const outputCanvas = document.createElement("canvas");
+    outputCanvas.width = cropWidth;
+    outputCanvas.height = cropHeight;
+    const outputContext = outputCanvas.getContext("2d");
+    if (!outputContext) return;
+    outputContext.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+    const width = Math.min(pageInfo.width * 0.35, Math.max(120, cropWidth * 0.45));
+    const height = Math.max(30, width * (cropHeight / cropWidth));
+    const overlay: Overlay = {
+      id: crypto.randomUUID(),
+      page: pageNumber,
+      type: "image",
+      x: Math.max(0, (pageInfo.width - width) / 2),
+      y: Math.max(0, (pageInfo.height - height) / 2),
+      width,
+      height,
+      color: "#111111",
+      imageData: outputCanvas.toDataURL("image/png"),
+      imageLabel: "Signature",
+    };
+
+    commitOverlays([...overlays, overlay]);
+    setSelectedId(overlay.id);
+    setShowSignaturePad(false);
+    setTool("select");
+    setStatus("Drawn signature added. Drag the Move handle to place it.");
+  };
+
   const handlePagePointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!pdfDocProxy) return;
     setEditingTextId(null);
@@ -587,7 +719,7 @@ export function PdfEditor() {
       pickCanvasColor(event);
       return;
     }
-    if (tool === "box" || tool === "line") {
+    if (tool === "box" || tool === "highlight" || tool === "line" || tool === "arrow") {
       const point = getPagePoint(event);
       setDrawingState({
         startX: point.x,
@@ -595,7 +727,15 @@ export function PdfEditor() {
         currentX: point.x,
         currentY: point.y,
       });
-      setStatus(tool === "line" ? "Drag to draw a line." : "Drag to draw a cover box.");
+      setStatus(
+        tool === "line"
+          ? "Drag to draw a line."
+          : tool === "arrow"
+            ? "Drag to draw an arrow."
+            : tool === "highlight"
+              ? "Drag to highlight an area."
+              : "Drag to draw a cover box.",
+      );
       return;
     }
     if (tool === "clone") {
@@ -641,8 +781,15 @@ export function PdfEditor() {
       drawingState.currentX - drawingState.startX,
       drawingState.currentY - drawingState.startY,
     );
-    if (tool === "line" ? lineLength < 6 : box.width < 6 || box.height < 6) {
-      setStatus(tool === "line" ? "Drag on the page to draw a line." : "Drag on the page to draw a cover box.");
+    const isLineShape = tool === "line" || tool === "arrow";
+    if (isLineShape ? lineLength < 6 : box.width < 6 || box.height < 6) {
+      setStatus(
+        isLineShape
+          ? `Drag on the page to draw ${tool === "arrow" ? "an arrow" : "a line"}.`
+          : tool === "highlight"
+            ? "Drag on the page to highlight an area."
+            : "Drag on the page to draw a cover box.",
+      );
       return;
     }
 
@@ -653,7 +800,7 @@ export function PdfEditor() {
       drawingState.currentY,
       strokeWidth,
     );
-    const activeBox = tool === "line" ? lineBox : box;
+    const activeBox = isLineShape ? lineBox : box;
     const baseOverlay = {
       id: crypto.randomUUID(),
       page: pageNumber,
@@ -670,15 +817,21 @@ export function PdfEditor() {
     }
 
     const overlay: Overlay =
-      tool === "line"
+      isLineShape
         ? {
             ...baseOverlay,
-            type: "line",
+            type: tool === "arrow" ? "arrow" : "line",
             color: pickedColor,
             lineDirection: lineBox.orientation === "up" ? "up" : "down",
             lineOrientation: lineBox.orientation,
             strokeWidth,
           }
+        : tool === "highlight"
+          ? {
+              ...baseOverlay,
+              type: "highlight",
+              color: pickedColor,
+            }
         : copiedImage
           ? {
               ...baseOverlay,
@@ -699,6 +852,10 @@ export function PdfEditor() {
     setStatus(
       tool === "line"
         ? "Line added. Drag the Move handle or resize endpoints."
+        : tool === "arrow"
+          ? "Arrow added. Drag the Move handle or resize endpoints."
+          : tool === "highlight"
+            ? "Highlight added. Move or resize it as needed."
         : copiedImage
           ? "Area copied. Drag the Move handle to place it."
           : "Box added. The dashed outline is only visible in the editor.",
@@ -801,13 +958,13 @@ export function PdfEditor() {
       setFontSize(overlay.fontSize || 18);
       setStatus("Text selected. Type on the page, or drag the Move handle to reposition it.");
     } else {
-      if (overlay.type === "box" || overlay.type === "line") {
+      if (overlay.type === "box" || overlay.type === "highlight" || overlay.type === "line" || overlay.type === "arrow") {
         setPickedColor(overlay.color);
       }
-      if (overlay.type === "line") {
+      if (overlay.type === "line" || overlay.type === "arrow") {
         setStrokeWidth(overlay.strokeWidth || 3);
       }
-      setStatus(`${overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.type === "line" ? "Line" : "Box"} selected. Drag it, resize it, or delete it.`);
+      setStatus(`${overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.type === "arrow" ? "Arrow" : overlay.type === "line" ? "Line" : overlay.type === "highlight" ? "Highlight" : "Box"} selected. Drag it, resize it, or delete it.`);
     }
   };
 
@@ -822,7 +979,12 @@ export function PdfEditor() {
   const updateSelectedBoxColor = (color: string) => {
     if (!isHexColor(color)) return;
     setPickedColor(color);
-    if (selectedOverlay?.type === "box" || selectedOverlay?.type === "line") {
+    if (
+      selectedOverlay?.type === "box" ||
+      selectedOverlay?.type === "highlight" ||
+      selectedOverlay?.type === "line" ||
+      selectedOverlay?.type === "arrow"
+    ) {
       updateOverlay(selectedOverlay.id, { color });
     }
   };
@@ -830,7 +992,7 @@ export function PdfEditor() {
   const updateSelectedStrokeWidth = (value: number) => {
     const nextStrokeWidth = Math.max(1, Math.min(24, value));
     setStrokeWidth(nextStrokeWidth);
-    if (selectedOverlay?.type === "line") {
+    if (selectedOverlay?.type === "line" || selectedOverlay?.type === "arrow") {
       updateOverlay(selectedOverlay.id, { strokeWidth: nextStrokeWidth });
     }
   };
@@ -848,7 +1010,7 @@ export function PdfEditor() {
     commitOverlays([...overlays, duplicate]);
     setSelectedId(duplicate.id);
     setEditingTextId(duplicate.type === "text" ? duplicate.id : null);
-    setStatus(`${duplicate.type === "box" ? "Box" : duplicate.type === "line" ? "Line" : duplicate.type === "image" ? duplicate.imageLabel || "Image" : "Text"} duplicated.`);
+    setStatus(`${duplicate.type === "box" ? "Box" : duplicate.type === "highlight" ? "Highlight" : duplicate.type === "arrow" ? "Arrow" : duplicate.type === "line" ? "Line" : duplicate.type === "image" ? duplicate.imageLabel || "Image" : "Text"} duplicated.`);
   }, [commitOverlays, overlays, pageInfo, selectedOverlay]);
 
   const handleDrop = async (event: DragEvent<HTMLElement>) => {
@@ -964,31 +1126,60 @@ export function PdfEditor() {
             borderColor: rgb(color.r, color.g, color.b),
             borderWidth: 0,
           });
-        } else if (overlay.type === "line") {
+        } else if (overlay.type === "highlight") {
+          const color = hexToRgb(overlay.color);
+          page.drawRectangle({
+            x,
+            y,
+            width: overlay.width * scaleX,
+            height: overlay.height * scaleY,
+            color: rgb(color.r, color.g, color.b),
+            opacity: 0.38,
+            borderWidth: 0,
+          });
+        } else if (overlay.type === "line" || overlay.type === "arrow") {
           const color = hexToRgb(overlay.color);
           const orientation = overlay.lineOrientation || overlay.lineDirection || "down";
+          const start =
+            orientation === "horizontal"
+              ? { x, y: y + (overlay.height * scaleY) / 2 }
+              : orientation === "vertical"
+                ? { x: x + (overlay.width * scaleX) / 2, y }
+                : {
+                    x,
+                    y: orientation === "up" ? y : y + overlay.height * scaleY,
+                  };
+          const end =
+            orientation === "horizontal"
+              ? { x: x + overlay.width * scaleX, y: y + (overlay.height * scaleY) / 2 }
+              : orientation === "vertical"
+                ? { x: x + (overlay.width * scaleX) / 2, y: y + overlay.height * scaleY }
+                : {
+                    x: x + overlay.width * scaleX,
+                    y: orientation === "up" ? y + overlay.height * scaleY : y,
+                  };
+          const thickness = (overlay.strokeWidth || 3) * scaleY;
           page.drawLine({
-            start:
-              orientation === "horizontal"
-                ? { x, y: y + (overlay.height * scaleY) / 2 }
-                : orientation === "vertical"
-                  ? { x: x + (overlay.width * scaleX) / 2, y }
-                  : {
-                      x,
-                      y: orientation === "up" ? y : y + overlay.height * scaleY,
-                    },
-            end:
-              orientation === "horizontal"
-                ? { x: x + overlay.width * scaleX, y: y + (overlay.height * scaleY) / 2 }
-                : orientation === "vertical"
-                  ? { x: x + (overlay.width * scaleX) / 2, y: y + overlay.height * scaleY }
-                  : {
-                      x: x + overlay.width * scaleX,
-                      y: orientation === "up" ? y + overlay.height * scaleY : y,
-                    },
-            thickness: (overlay.strokeWidth || 3) * scaleY,
+            start,
+            end,
+            thickness,
             color: rgb(color.r, color.g, color.b),
           });
+          if (overlay.type === "arrow") {
+            const angle = Math.atan2(end.y - start.y, end.x - start.x);
+            const headLength = Math.max(10, thickness * 5);
+            const headAngle = Math.PI / 7;
+            const left = {
+              x: end.x - headLength * Math.cos(angle - headAngle),
+              y: end.y - headLength * Math.sin(angle - headAngle),
+            };
+            const right = {
+              x: end.x - headLength * Math.cos(angle + headAngle),
+              y: end.y - headLength * Math.sin(angle + headAngle),
+            };
+            page.drawLine({ start: end, end: left, thickness, color: rgb(color.r, color.g, color.b) });
+            page.drawLine({ start: end, end: right, thickness, color: rgb(color.r, color.g, color.b) });
+          }
         } else if (overlay.text) {
           const color = hexToRgb(overlay.color);
           page.drawText(overlay.text, {
@@ -1113,9 +1304,9 @@ export function PdfEditor() {
                 {tool === "pick"
                   ? "Click the PDF to sample a pixel color."
                   : isPlacing
-                    ? `${tool === "box" ? "Drag on the PDF to draw a cover box." : tool === "line" ? "Drag on the PDF to draw a line." : tool === "clone" ? "Drag around an area to copy it." : "Click the PDF to place editable text."}`
+                    ? `${tool === "box" ? "Drag on the PDF to draw a cover box." : tool === "highlight" ? "Drag on the PDF to highlight an area." : tool === "line" ? "Drag on the PDF to draw a line." : tool === "arrow" ? "Drag on the PDF to draw an arrow." : tool === "clone" ? "Drag around an area to copy it." : "Click the PDF to place editable text."}`
                     : selectedOverlay
-                      ? `${selectedOverlay.type === "box" ? "Box" : selectedOverlay.type === "line" ? "Line" : selectedOverlay.type === "image" ? selectedOverlay.imageLabel || "Image" : "Text"} selected.`
+                      ? `${selectedOverlay.type === "box" ? "Box" : selectedOverlay.type === "highlight" ? "Highlight" : selectedOverlay.type === "arrow" ? "Arrow" : selectedOverlay.type === "line" ? "Line" : selectedOverlay.type === "image" ? selectedOverlay.imageLabel || "Image" : "Text"} selected.`
                       : "Click an item to select it."}
               </p>
             </div>
@@ -1171,12 +1362,32 @@ export function PdfEditor() {
               />
             </label>
 
+            <button
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#ded8cc] bg-white text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!pageInfo}
+              type="button"
+              onClick={() => {
+                setShowSignaturePad(true);
+                setStatus("Draw your signature, then add it to the PDF.");
+              }}
+            >
+              <PenLine size={17} />
+              Draw signature
+            </button>
+
             {(showShapeControls || showTextControls) ? (
               <section className="space-y-3">
                 <h2 className="text-xs font-semibold uppercase tracking-normal text-[#69635b]">Style</h2>
                 {showShapeControls ? (
                   <label className="block text-sm font-medium">
-                    {selectedOverlay?.type === "line" || tool === "line" ? "Shape color" : "Cover color"}
+                    {selectedOverlay?.type === "line" ||
+                    selectedOverlay?.type === "arrow" ||
+                    selectedOverlay?.type === "highlight" ||
+                    tool === "line" ||
+                    tool === "arrow" ||
+                    tool === "highlight"
+                      ? "Shape color"
+                      : "Cover color"}
                     <div className="mt-2 flex items-center gap-2">
                       <input
                         className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
@@ -1199,9 +1410,12 @@ export function PdfEditor() {
                   </label>
                 ) : null}
 
-                {selectedOverlay?.type === "line" || tool === "line" ? (
+                {selectedOverlay?.type === "line" ||
+                selectedOverlay?.type === "arrow" ||
+                tool === "line" ||
+                tool === "arrow" ? (
                   <label className="block text-sm font-medium">
-                    Line thickness
+                    Stroke thickness
                     <input
                       className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
                       min={1}
@@ -1345,7 +1559,7 @@ export function PdfEditor() {
                         }}
                       >
                         <span className="truncate">
-                          {overlay.type === "box" ? "Box" : overlay.type === "line" ? "Line" : overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.text?.trim() || "Text"}
+                          {overlay.type === "box" ? "Box" : overlay.type === "highlight" ? "Highlight" : overlay.type === "arrow" ? "Arrow" : overlay.type === "line" ? "Line" : overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.text?.trim() || "Text"}
                         </span>
                         <span className="shrink-0 text-xs text-[#69635b]">
                           p{overlay.page} - {overlays.length - index}
@@ -1462,17 +1676,17 @@ export function PdfEditor() {
                 <canvas ref={canvasRef} className="absolute inset-0 bg-white" />
                 {!previewMode && isPlacing ? (
                   <div className="pointer-events-none absolute left-3 top-3 z-20 rounded-md border border-[#146c63] bg-white/95 px-3 py-2 text-xs font-semibold text-[#146c63] shadow-sm">
-                    {tool === "box" ? "Drag to draw box" : tool === "line" ? "Drag to draw line" : tool === "clone" ? "Drag to copy area" : "Click to place text"}
+                    {tool === "box" ? "Drag to draw box" : tool === "highlight" ? "Drag to highlight" : tool === "line" ? "Drag to draw line" : tool === "arrow" ? "Drag to draw arrow" : tool === "clone" ? "Drag to copy area" : "Click to place text"}
                   </div>
                 ) : null}
                 {!previewMode && drawingState ? (
                   <div
                     className={`pointer-events-none absolute z-10 ${
-                      tool === "line" ? "" : "border-2 border-dashed border-[#146c63] bg-[#146c63]/15"
+                      tool === "line" || tool === "arrow" ? "" : "border-2 border-dashed border-[#146c63] bg-[#146c63]/15"
                     }`}
                     style={{
                       left:
-                        (tool === "line"
+                        (tool === "line" || tool === "arrow"
                           ? getLineFromPoints(
                               drawingState.startX,
                               drawingState.startY,
@@ -1487,7 +1701,7 @@ export function PdfEditor() {
                               drawingState.currentY,
                             ).x) * zoom,
                       top:
-                        (tool === "line"
+                        (tool === "line" || tool === "arrow"
                           ? getLineFromPoints(
                               drawingState.startX,
                               drawingState.startY,
@@ -1502,7 +1716,7 @@ export function PdfEditor() {
                               drawingState.currentY,
                             ).y) * zoom,
                       width:
-                        (tool === "line"
+                        (tool === "line" || tool === "arrow"
                           ? getLineFromPoints(
                               drawingState.startX,
                               drawingState.startY,
@@ -1517,7 +1731,7 @@ export function PdfEditor() {
                               drawingState.currentY,
                             ).width) * zoom,
                       height:
-                        (tool === "line"
+                        (tool === "line" || tool === "arrow"
                           ? getLineFromPoints(
                               drawingState.startX,
                               drawingState.startY,
@@ -1533,8 +1747,15 @@ export function PdfEditor() {
                             ).height) * zoom,
                     }}
                   >
-                    {tool === "line" ? (
+                    {tool === "line" || tool === "arrow" ? (
                       <svg className="h-full w-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                        {tool === "arrow" ? (
+                          <defs>
+                            <marker id="preview-arrowhead" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
+                              <path d="M0,0 L8,4 L0,8 Z" fill="#146c63" />
+                            </marker>
+                          </defs>
+                        ) : null}
                         {(() => {
                           const previewLine = getLineFromPoints(
                             drawingState.startX,
@@ -1546,6 +1767,7 @@ export function PdfEditor() {
                           return (
                             <line
                               stroke="#146c63"
+                              markerEnd={tool === "arrow" ? "url(#preview-arrowhead)" : undefined}
                               strokeLinecap="round"
                               strokeWidth={Math.max(1, ((strokeWidth || 3) / Math.max(previewLine.width, previewLine.height)) * 100)}
                               x1={previewLine.orientation === "vertical" ? "50" : "0"}
@@ -1567,7 +1789,11 @@ export function PdfEditor() {
                         ? "outline outline-1 outline-transparent"
                         : selectedId === overlay.id
                         ? "outline outline-2 outline-[#146c63]"
-                        : overlay.type === "box" || overlay.type === "line" || overlay.type === "image"
+                        : overlay.type === "box" ||
+                            overlay.type === "highlight" ||
+                            overlay.type === "line" ||
+                            overlay.type === "arrow" ||
+                            overlay.type === "image"
                           ? "outline outline-1 outline-transparent hover:outline-[#146c63]/35"
                           : "outline outline-1 outline-transparent"
                     }`}
@@ -1576,7 +1802,10 @@ export function PdfEditor() {
                       top: overlay.y * zoom,
                       width: overlay.width * zoom,
                       height: overlay.height * zoom,
-                      background: overlay.type === "box" ? overlay.color : "transparent",
+                      background:
+                        overlay.type === "box"
+                          ? overlay.color
+                          : "transparent",
                       color: overlay.color,
                       fontSize: (overlay.fontSize || 18) * zoom,
                       lineHeight: 1.15,
@@ -1594,9 +1823,26 @@ export function PdfEditor() {
                     onPointerMove={continueDrag}
                     onPointerUp={() => setDragState(null)}
                   >
-                    {overlay.type === "line" ? (
+                    {overlay.type === "highlight" ? (
+                      <div className="h-full w-full" style={{ background: overlay.color, opacity: 0.38 }} />
+                    ) : overlay.type === "line" || overlay.type === "arrow" ? (
                       <svg className="h-full w-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                        {overlay.type === "arrow" ? (
+                          <defs>
+                            <marker
+                              id={`arrowhead-${overlay.id}`}
+                              markerHeight="8"
+                              markerWidth="8"
+                              orient="auto"
+                              refX="7"
+                              refY="4"
+                            >
+                              <path d="M0,0 L8,4 L0,8 Z" fill={overlay.color} />
+                            </marker>
+                          </defs>
+                        ) : null}
                         <line
+                          markerEnd={overlay.type === "arrow" ? `url(#arrowhead-${overlay.id})` : undefined}
                           stroke={overlay.color}
                           strokeLinecap="round"
                           strokeWidth={Math.max(1, ((overlay.strokeWidth || 3) / Math.max(overlay.width, overlay.height)) * 100)}
@@ -1679,6 +1925,52 @@ export function PdfEditor() {
           </div>
         </section>
       </section>
+      {showSignaturePad ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-2xl rounded-md border border-[#ded8cc] bg-[#fffdfa] p-4 shadow-xl">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Draw signature</h2>
+                <p className="text-sm text-[#69635b]">Use your mouse, trackpad, or touch screen.</p>
+              </div>
+              <button
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[#ded8cc] bg-white hover:bg-[#f5f3ef]"
+                type="button"
+                onClick={() => setShowSignaturePad(false)}
+                title="Close"
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <canvas
+              ref={signatureCanvasRef}
+              className="h-56 w-full touch-none rounded-md border border-[#ded8cc] bg-white"
+              height={220}
+              width={720}
+              onPointerDown={beginDrawSignature}
+              onPointerMove={continueDrawSignature}
+              onPointerUp={() => setIsDrawingSignature(false)}
+              onPointerLeave={() => setIsDrawingSignature(false)}
+            />
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <button
+                className="h-10 rounded-md border border-[#ded8cc] bg-white px-4 text-sm font-medium hover:bg-[#f5f3ef]"
+                type="button"
+                onClick={clearSignaturePad}
+              >
+                Clear
+              </button>
+              <button
+                className="h-10 rounded-md bg-[#146c63] px-4 text-sm font-medium text-white hover:bg-[#0f5e56]"
+                type="button"
+                onClick={addDrawnSignature}
+              >
+                Add signature
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

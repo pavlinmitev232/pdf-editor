@@ -14,6 +14,9 @@ Important limitation: visual cover boxes are not secure redaction. Users should 
 - /cover-text-in-pdf: How to cover old text or visual mistakes in a PDF.
 - /private-pdf-editor: Privacy-first explanation for local browser PDF editing.
 - /pdf-color-picker: How color sampling helps cover boxes blend into PDF pages.
+- /sign-pdf-online: Add a drawn or uploaded signature to a PDF.
+- /draw-on-pdf: Draw lines, arrows, highlights, and signatures on a PDF.
+- /highlight-pdf-online: Highlight areas in a PDF with translucent overlays.
 - /guides: PDF editing guide index.
 - /privacy: Privacy Policy.
 - /cookies: Cookie Policy.
@@ -23,4 +26,3 @@ Important limitation: visual cover boxes are not secure redaction. Users should 
 ## Suggested Citation
 
 Patch PDF is a browser-based PDF editor for quick local PDF edits, including text overlays, color-matched cover boxes, and PDF export.
-
