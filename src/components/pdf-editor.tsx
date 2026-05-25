@@ -247,6 +247,13 @@ export function PdfEditor() {
     selectedOverlay?.type === "line";
   const showTextControls = tool === "text" || selectedOverlay?.type === "text";
 
+  const selectTool = (nextTool: Tool) => {
+    setTool(nextTool);
+    if (nextTool === "line") {
+      setPickedColor("#111111");
+    }
+  };
+
   const commitOverlays = useCallback(
     (nextOverlays: Overlay[]) => {
       setHistory((items) => ({
@@ -1084,7 +1091,7 @@ export function PdfEditor() {
                           : "border-[#ded8cc] bg-white text-[#211f1c] hover:bg-[#f5f3ef]"
                       }`}
                       type="button"
-                      onClick={() => setTool(option.id)}
+                      onClick={() => selectTool(option.id)}
                       title={option.label}
                     >
                       <Icon size={17} />
