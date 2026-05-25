@@ -264,6 +264,7 @@ export function PdfEditor() {
     selectedOverlay?.type === "line" ||
     selectedOverlay?.type === "arrow";
   const showTextControls = tool === "text" || selectedOverlay?.type === "text";
+  const showImageControls = selectedOverlay?.type === "image";
 
   const selectTool = (nextTool: Tool) => {
     setTool(nextTool);
@@ -997,6 +998,29 @@ export function PdfEditor() {
     }
   };
 
+  const updateSelectedImageWidth = (width: number) => {
+    if (!selectedOverlay || selectedOverlay.type !== "image" || !pageInfo) return;
+
+    const ratio = selectedOverlay.height / selectedOverlay.width || 0.35;
+    const nextWidth = Math.max(24, Math.min(pageInfo.width, width));
+    const nextHeight = Math.max(12, Math.min(pageInfo.height, nextWidth * ratio));
+    const centerX = selectedOverlay.x + selectedOverlay.width / 2;
+    const centerY = selectedOverlay.y + selectedOverlay.height / 2;
+
+    updateOverlay(selectedOverlay.id, {
+      width: nextWidth,
+      height: nextHeight,
+      x: Math.max(0, Math.min(pageInfo.width - nextWidth, centerX - nextWidth / 2)),
+      y: Math.max(0, Math.min(pageInfo.height - nextHeight, centerY - nextHeight / 2)),
+    });
+  };
+
+  const scaleSelectedImage = (scale: number) => {
+    if (!selectedOverlay || selectedOverlay.type !== "image") return;
+    recordHistory();
+    updateSelectedImageWidth(selectedOverlay.width * scale);
+  };
+
   const duplicateSelected = useCallback(() => {
     if (!selectedOverlay || !pageInfo) return;
     const offset = 18;
@@ -1375,7 +1399,7 @@ export function PdfEditor() {
               Draw signature
             </button>
 
-            {(showShapeControls || showTextControls) ? (
+            {(showShapeControls || showTextControls || showImageControls) ? (
               <section className="space-y-3">
                 <h2 className="text-xs font-semibold uppercase tracking-normal text-[#69635b]">Style</h2>
                 {showShapeControls ? (
@@ -1484,6 +1508,45 @@ export function PdfEditor() {
                             });
                           }
                         }}
+                      />
+                    </label>
+                  </>
+                ) : null}
+
+                {showImageControls ? (
+                  <>
+                    <div>
+                      <div className="mb-2 text-sm font-medium">
+                        {selectedOverlay?.imageLabel || "Image"} size
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          className="h-10 rounded-md border border-[#ded8cc] bg-white text-sm font-medium hover:bg-[#f5f3ef]"
+                          type="button"
+                          onClick={() => scaleSelectedImage(0.85)}
+                        >
+                          Smaller
+                        </button>
+                        <button
+                          className="h-10 rounded-md border border-[#ded8cc] bg-white text-sm font-medium hover:bg-[#f5f3ef]"
+                          type="button"
+                          onClick={() => scaleSelectedImage(1.15)}
+                        >
+                          Larger
+                        </button>
+                      </div>
+                    </div>
+
+                    <label className="block text-sm font-medium">
+                      Width
+                      <input
+                        className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                        min={24}
+                        max={pageInfo?.width || 1000}
+                        type="number"
+                        value={Math.round(selectedOverlay?.width || 0)}
+                        onFocus={recordHistory}
+                        onChange={(event) => updateSelectedImageWidth(Number(event.target.value))}
                       />
                     </label>
                   </>
