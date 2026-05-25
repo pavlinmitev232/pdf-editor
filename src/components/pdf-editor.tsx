@@ -113,10 +113,6 @@ function componentToHex(value: number) {
   return value.toString(16).padStart(2, "0");
 }
 
-function luminance(red: number, green: number, blue: number) {
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-}
-
 function rgbToHex(red: number, green: number, blue: number) {
   return `#${componentToHex(red)}${componentToHex(green)}${componentToHex(blue)}`;
 }
@@ -329,34 +325,15 @@ export function PdfEditor() {
 
     if (!context) return;
 
-    const sampleRadius = 2;
-    const sampleX = Math.max(0, x - sampleRadius);
-    const sampleY = Math.max(0, y - sampleRadius);
-    const sampleWidth = Math.min(canvas.width - sampleX, sampleRadius * 2 + 1);
-    const sampleHeight = Math.min(canvas.height - sampleY, sampleRadius * 2 + 1);
-    const center = context.getImageData(x, y, 1, 1).data;
-    const sample = context.getImageData(sampleX, sampleY, sampleWidth, sampleHeight).data;
-    let darkest = { red: center[0], green: center[1], blue: center[2], light: luminance(center[0], center[1], center[2]) };
-
-    for (let index = 0; index < sample.length; index += 4) {
-      const light = luminance(sample[index], sample[index + 1], sample[index + 2]);
-      if (light < darkest.light) {
-        darkest = {
-          red: sample[index],
-          green: sample[index + 1],
-          blue: sample[index + 2],
-          light,
-        };
-      }
-    }
-
-    const centerLight = luminance(center[0], center[1], center[2]);
-    const color =
-      centerLight < 110 && darkest.light + 24 < centerLight
-        ? rgbToHex(darkest.red, darkest.green, darkest.blue)
-        : rgbToHex(center[0], center[1], center[2]);
+    const [red, green, blue] = context.getImageData(x, y, 1, 1).data;
+    const color = rgbToHex(red, green, blue);
     setPickedColor(color);
-    setStatus(`Picked ${color}. Choose Box or Text when you are ready to place it.`);
+    if (selectedOverlay?.type === "box") {
+      updateOverlay(selectedOverlay.id, { color });
+      setStatus(`Picked exact pixel ${color} and applied it to the selected box.`);
+      return;
+    }
+    setStatus(`Picked exact pixel ${color}. Choose Box when you are ready to place it.`);
   };
 
   const addTextOverlay = (event: PointerEvent<HTMLElement>) => {
