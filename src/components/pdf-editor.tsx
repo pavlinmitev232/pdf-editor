@@ -15,6 +15,8 @@ import {
   Minus,
   MousePointer2,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
   Redo2,
   Square,
   Move,
@@ -237,6 +239,7 @@ export function PdfEditor() {
   const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [fitAfterRender, setFitAfterRender] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
+  const [toolsCollapsed, setToolsCollapsed] = useState(false);
   const [status, setStatus] = useState("Upload a PDF to start editing in your browser.");
 
   const currentOverlays = useMemo(
@@ -1111,6 +1114,7 @@ export function PdfEditor() {
         setDrawingState(null);
         setEditingTextId(null);
         setPreviewMode(false);
+        setToolsCollapsed(false);
         setStatus("Select tool active.");
         return;
       }
@@ -1265,8 +1269,18 @@ export function PdfEditor() {
     }
   };
 
+  const togglePreview = () => {
+    const nextPreviewMode = !previewMode;
+    setPreviewMode(nextPreviewMode);
+    setEditingTextId(null);
+    setDrawingState(null);
+    setToolsCollapsed(nextPreviewMode);
+    setStatus(nextPreviewMode ? "Preview mode active. Only the document is shown." : "Editor mode active.");
+  };
+
   return (
     <main className="flex h-[100dvh] overflow-hidden flex-col bg-[#f5f3ef] text-[#211f1c]">
+      {!previewMode ? (
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] bg-[#fffdfa] px-3 py-3 md:px-5">
         <div>
           <h1 className="text-xl font-semibold">{siteConfig.name}</h1>
@@ -1300,10 +1314,17 @@ export function PdfEditor() {
           </label>
         </div>
       </header>
+      ) : null}
 
-      <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[240px_minmax(0,1fr)] md:grid-rows-none">
-        <aside className="min-h-0 max-h-[42dvh] overflow-auto border-b border-[#ded8cc] bg-[#fffdfa] p-3 md:max-h-none md:border-b-0 md:border-r">
-          <div className="grid gap-4 sm:grid-cols-2 md:block md:space-y-5">
+      <section className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <aside
+          className={`min-h-0 overflow-auto border-[#ded8cc] bg-[#fffdfa] transition-all duration-300 ease-out ${
+            toolsCollapsed || previewMode
+              ? "max-h-0 border-b-0 p-0 opacity-0 md:w-0 md:border-r-0"
+              : "max-h-[42dvh] border-b p-3 opacity-100 md:max-h-none md:w-60 md:shrink-0 md:border-b-0 md:border-r"
+          }`}
+        >
+          <div className={`grid gap-4 sm:grid-cols-2 md:block md:space-y-5 ${toolsCollapsed || previewMode ? "pointer-events-none" : ""}`}>
             <section>
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-normal text-[#69635b]">Tools</h2>
               <div className="grid grid-cols-2 gap-2">
@@ -1672,6 +1693,7 @@ export function PdfEditor() {
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col">
+          {!previewMode ? (
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] bg-[#fffdfa] px-3 py-3 md:px-4">
             <div className="min-w-0">
               <div className="truncate text-sm text-[#69635b]">{status}</div>
@@ -1683,6 +1705,14 @@ export function PdfEditor() {
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <button
+                className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-[#ded8cc] bg-white px-3 text-sm font-medium text-[#211f1c] transition hover:bg-[#f5f3ef]"
+                type="button"
+                onClick={() => setToolsCollapsed((value) => !value)}
+              >
+                {toolsCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                {toolsCollapsed ? "Show tools" : "Hide tools"}
+              </button>
+              <button
                 className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium ${
                   previewMode
                     ? "border-[#211f1c] bg-[#211f1c] text-white"
@@ -1690,11 +1720,7 @@ export function PdfEditor() {
                 }`}
                 disabled={!pdfBytes}
                 type="button"
-                onClick={() => {
-                  setPreviewMode((value) => !value);
-                  setEditingTextId(null);
-                  setStatus(previewMode ? "Editor mode active." : "Preview mode active. Editor outlines and handles are hidden.");
-                }}
+                onClick={togglePreview}
               >
                 {previewMode ? <EyeOff size={16} /> : <Eye size={16} />}
                 {previewMode ? "Exit preview" : "Preview"}
@@ -1739,10 +1765,11 @@ export function PdfEditor() {
               </button>
             </div>
           </div>
+          ) : null}
 
           <div
             ref={stageRef}
-            className="flex flex-1 overflow-auto p-3 md:p-5"
+            className={`flex flex-1 overflow-auto transition-all duration-300 ease-out ${previewMode ? "bg-[#d8d3c8] p-2 md:p-4" : "p-3 md:p-5"}`}
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDrop}
           >
@@ -2012,6 +2039,16 @@ export function PdfEditor() {
           </div>
         </section>
       </section>
+      {previewMode ? (
+        <button
+          className="fixed right-4 top-4 z-50 inline-flex h-10 items-center gap-2 rounded-md bg-[#211f1c] px-4 text-sm font-semibold text-white shadow-lg shadow-black/20 transition hover:bg-[#3a3630]"
+          type="button"
+          onClick={togglePreview}
+        >
+          <EyeOff size={16} />
+          Exit preview
+        </button>
+      ) : null}
       {showSignaturePad ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
           <div className="w-full max-w-2xl rounded-md border border-[#ded8cc] bg-[#fffdfa] p-4 shadow-xl">
