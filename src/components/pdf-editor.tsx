@@ -1266,14 +1266,14 @@ export function PdfEditor() {
   };
 
   return (
-    <main className="flex h-screen overflow-hidden flex-col bg-[#f5f3ef] text-[#211f1c]">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-[#ded8cc] bg-[#fffdfa] px-5 py-3">
+    <main className="flex h-[100dvh] overflow-hidden flex-col bg-[#f5f3ef] text-[#211f1c]">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] bg-[#fffdfa] px-3 py-3 md:px-5">
         <div>
           <h1 className="text-xl font-semibold">{siteConfig.name}</h1>
-          <p className="text-sm text-[#69635b]">Local-first visual editing for quick cleanups and covers.</p>
+          <p className="hidden text-sm text-[#69635b] sm:block">Local-first visual editing for quick cleanups and covers.</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <nav className="flex flex-wrap items-center gap-1 text-sm text-[#69635b]">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+          <nav className="hidden min-w-0 flex-wrap items-center justify-end gap-1 text-sm text-[#69635b] sm:flex">
             <a className="rounded-md px-2.5 py-2 hover:bg-[#f5f3ef] hover:text-[#211f1c]" href="/guides">
               Guides
             </a>
@@ -1301,9 +1301,9 @@ export function PdfEditor() {
         </div>
       </header>
 
-      <section className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)]">
-        <aside className="min-h-0 overflow-auto border-r border-[#ded8cc] bg-[#fffdfa] p-3">
-          <div className="space-y-5">
+      <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[240px_minmax(0,1fr)] md:grid-rows-none">
+        <aside className="min-h-0 max-h-[42dvh] overflow-auto border-b border-[#ded8cc] bg-[#fffdfa] p-3 md:max-h-none md:border-b-0 md:border-r">
+          <div className="grid gap-4 sm:grid-cols-2 md:block md:space-y-5">
             <section>
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-normal text-[#69635b]">Tools</h2>
               <div className="grid grid-cols-2 gap-2">
@@ -1672,7 +1672,7 @@ export function PdfEditor() {
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col">
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] bg-[#fffdfa] px-4 py-3">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] bg-[#fffdfa] px-3 py-3 md:px-4">
             <div className="min-w-0">
               <div className="truncate text-sm text-[#69635b]">{status}</div>
               {overlays.length ? (
@@ -1681,7 +1681,7 @@ export function PdfEditor() {
                 </div>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <button
                 className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium ${
                   previewMode
@@ -1742,7 +1742,7 @@ export function PdfEditor() {
 
           <div
             ref={stageRef}
-            className="flex flex-1 overflow-auto p-5"
+            className="flex flex-1 overflow-auto p-3 md:p-5"
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDrop}
           >
@@ -1997,7 +1997,7 @@ export function PdfEditor() {
               </div>
             ) : (
               <label
-                className="m-auto flex min-h-80 w-full max-w-xl cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-[#bdb5a7] bg-[#fffdfa] p-10 text-center hover:bg-white"
+                className="m-auto flex min-h-64 w-full max-w-xl cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-[#bdb5a7] bg-[#fffdfa] p-6 text-center hover:bg-white md:min-h-80 md:p-10"
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={handleDrop}
               >
