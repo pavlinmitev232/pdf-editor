@@ -659,27 +659,42 @@ export function PdfEditor() {
         return rows;
       }, []);
 
-    const pointedRow =
-      mergedRows
-        .map((row) => ({
-          row,
+    const contentBlocks = mergedRows.reduce<Array<{ top: number; bottom: number; source: "pdf" | "overlay" }>>(
+      (blocks, row) => {
+        const previous = blocks.at(-1);
+        const blockGap = previous?.source === "overlay" || row.source === "overlay" ? 20 : 16;
+        if (previous && row.top <= previous.bottom + blockGap) {
+          previous.bottom = Math.max(previous.bottom, row.bottom);
+          previous.source = previous.source === "overlay" || row.source === "overlay" ? "overlay" : "pdf";
+          return blocks;
+        }
+        blocks.push({ ...row });
+        return blocks;
+      },
+      [],
+    );
+
+    const pointedBlock =
+      contentBlocks
+        .map((block) => ({
+          block,
           distance:
-            point.y >= row.top - 22 && point.y <= row.bottom + 42
+            point.y >= block.bottom - 34 && point.y <= block.bottom + 92
               ? 0
-              : Math.min(Math.abs(point.y - row.top), Math.abs(point.y - row.bottom)),
+              : Math.abs(point.y - block.bottom),
         }))
-        .filter((item) => item.distance <= 95)
-        .sort((a, b) => a.distance - b.distance || b.row.bottom - a.row.bottom)[0]?.row || null;
-    const lastRow = mergedRows.at(-1) || null;
-    const targetRow = pointedRow || (lastRow && point.y >= lastRow.bottom - 120 ? lastRow : null);
+        .filter((item) => item.distance <= 92)
+        .sort((a, b) => a.distance - b.distance || b.block.bottom - a.block.bottom)[0]?.block || null;
+    const lastBlock = contentBlocks.at(-1) || null;
+    const targetBlock = pointedBlock || (lastBlock && point.y >= lastBlock.bottom - 72 ? lastBlock : null);
 
-    if (!targetRow) return null;
+    if (!targetBlock) return null;
 
-    const contentBottom = Math.max(margin, targetRow.bottom);
+    const contentBottom = Math.max(margin, targetBlock.bottom);
     const suggestedY = Math.max(margin, Math.min(pageInfo.height - sectionHeight - margin, contentBottom + 18));
     const isNearInsertionPoint =
-      point.y >= Math.max(margin, targetRow.top - 35) &&
-      point.y <= Math.min(pageInfo.height - margin, suggestedY + sectionHeight + 140);
+      point.y >= Math.max(margin, targetBlock.bottom - 42) &&
+      point.y <= Math.min(pageInfo.height - margin, targetBlock.bottom + 110);
     if (!isNearInsertionPoint) return null;
 
     return {
