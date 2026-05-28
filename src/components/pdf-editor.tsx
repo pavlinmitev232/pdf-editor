@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import {
   ArrowUpRight,
@@ -17,6 +17,7 @@ import {
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   Redo2,
   Square,
   Move,
@@ -30,12 +31,24 @@ import {
 } from "lucide-react";
 import { siteConfig } from "@/lib/site";
 
-type Tool = "select" | "pick" | "box" | "highlight" | "line" | "arrow" | "text" | "clone";
+type Tool = "select" | "pick" | "box" | "highlight" | "line" | "arrow" | "text" | "clone" | "section";
+
+type SectionTemplateId = "skills" | "education" | "experience" | "projects" | "certifications" | "custom";
+
+type SectionTemplate = {
+  id: SectionTemplateId;
+  label: string;
+  title: string;
+  body: string;
+  titleColor: string;
+  bodyColor: string;
+  accentColor: string;
+};
 
 type Overlay = {
   id: string;
   page: number;
-  type: "box" | "highlight" | "line" | "arrow" | "text" | "image";
+  type: "box" | "highlight" | "line" | "arrow" | "text" | "image" | "section";
   x: number;
   y: number;
   width: number;
@@ -48,6 +61,13 @@ type Overlay = {
   lineOrientation?: "horizontal" | "vertical" | "down" | "up";
   lineDirection?: "down" | "up";
   strokeWidth?: number;
+  sectionTitle?: string;
+  sectionBody?: string;
+  sectionTemplate?: SectionTemplateId;
+  sectionTitleColor?: string;
+  sectionBodyColor?: string;
+  sectionAccentColor?: string;
+  titleSize?: number;
 };
 
 type PageInfo = {
@@ -77,6 +97,13 @@ type HistoryState = {
   future: Overlay[][];
 };
 
+type SectionPlacement = {
+  x: number;
+  y: number;
+  width: number;
+  column: "left" | "right" | "full";
+};
+
 type PdfPageProxy = {
   getViewport: (options: { scale: number }) => { width: number; height: number };
   render: (options: {
@@ -99,6 +126,64 @@ const toolOptions: Array<{ id: Tool; label: string; icon: React.ComponentType<{ 
   { id: "arrow", label: "Arrow", icon: ArrowUpRight },
   { id: "text", label: "Text", icon: Type },
   { id: "clone", label: "Copy area", icon: Copy },
+  { id: "section", label: "Section", icon: List },
+];
+
+const sectionTemplates: SectionTemplate[] = [
+  {
+    id: "skills",
+    label: "Skills",
+    title: "SKILLS",
+    body: "- Skill one\n- Skill two\n- Skill three",
+    titleColor: "#0f3d3e",
+    bodyColor: "#242424",
+    accentColor: "#17a398",
+  },
+  {
+    id: "education",
+    label: "Education",
+    title: "EDUCATION",
+    body: "Degree or certificate\nSchool name - Year\nKey course, award, or focus",
+    titleColor: "#1d3557",
+    bodyColor: "#2b2b2b",
+    accentColor: "#3a86ff",
+  },
+  {
+    id: "experience",
+    label: "Experience",
+    title: "EXPERIENCE",
+    body: "Role title - Company\n- Achievement or responsibility\n- Achievement or responsibility",
+    titleColor: "#2a2a2a",
+    bodyColor: "#303030",
+    accentColor: "#146c63",
+  },
+  {
+    id: "projects",
+    label: "Projects",
+    title: "PROJECTS",
+    body: "Project name\n- What you built or improved\n- Tools, result, or link",
+    titleColor: "#213547",
+    bodyColor: "#2f2f2f",
+    accentColor: "#ff8a00",
+  },
+  {
+    id: "certifications",
+    label: "Certifications",
+    title: "CERTIFICATIONS",
+    body: "Certification name - Issuer\nCertification name - Issuer",
+    titleColor: "#243b53",
+    bodyColor: "#2d3748",
+    accentColor: "#8a4fff",
+  },
+  {
+    id: "custom",
+    label: "Blank",
+    title: "NEW SECTION",
+    body: "Add details here",
+    titleColor: "#111111",
+    bodyColor: "#333333",
+    accentColor: "#146c63",
+  },
 ];
 
 const resizeHandles: Array<{
@@ -183,6 +268,50 @@ function getLineFromPoints(startX: number, startY: number, currentX: number, cur
   };
 }
 
+function getSectionPlacement(point: { x: number; y: number }, pageInfo: PageInfo): SectionPlacement {
+  const margin = Math.max(28, pageInfo.width * 0.055);
+  const gutter = Math.max(22, pageInfo.width * 0.035);
+  const twoColumnWidth = Math.max(120, (pageInfo.width - margin * 2 - gutter) / 2);
+  const fullWidth = Math.max(160, pageInfo.width - margin * 2);
+  const y = margin;
+
+  if (point.x < pageInfo.width * 0.43) {
+    return { x: margin, y, width: twoColumnWidth, column: "left" };
+  }
+
+  if (point.x > pageInfo.width * 0.57) {
+    return { x: margin + twoColumnWidth + gutter, y, width: twoColumnWidth, column: "right" };
+  }
+
+  return { x: margin, y, width: fullWidth, column: "full" };
+}
+
+function getOverlayLabel(overlay: Overlay) {
+  if (overlay.type === "box") return "Box";
+  if (overlay.type === "highlight") return "Highlight";
+  if (overlay.type === "arrow") return "Arrow";
+  if (overlay.type === "line") return "Line";
+  if (overlay.type === "image") return overlay.imageLabel || "Image";
+  if (overlay.type === "section") return overlay.sectionTitle?.trim() || "Section";
+  return overlay.text?.trim() || "Text";
+}
+
+function getSectionLines(body = "") {
+  return body
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+}
+
+function isBulletSection(overlay: Overlay) {
+  return (
+    overlay.sectionTemplate === "skills" ||
+    overlay.sectionTemplate === "experience" ||
+    overlay.sectionTemplate === "projects" ||
+    getSectionLines(overlay.sectionBody).some((line) => line.trimStart().startsWith("- "))
+  );
+}
+
 function loadImageFromDataUrl(dataUrl: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -231,6 +360,7 @@ export function PdfEditor() {
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [drawingState, setDrawingState] = useState<DrawingState | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [showSignaturePad, setShowSignaturePad] = useState(false);
   const [isDrawingSignature, setIsDrawingSignature] = useState(false);
   const [imageWidthValue, setImageWidthValue] = useState("");
@@ -240,6 +370,8 @@ export function PdfEditor() {
   const [fitAfterRender, setFitAfterRender] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
+  const [sectionHover, setSectionHover] = useState<SectionPlacement | null>(null);
+  const [sectionMenu, setSectionMenu] = useState<SectionPlacement | null>(null);
   const [status, setStatus] = useState("Upload a PDF to start editing in your browser.");
 
   const currentOverlays = useMemo(
@@ -257,7 +389,8 @@ export function PdfEditor() {
     tool === "line" ||
     tool === "arrow" ||
     tool === "text" ||
-    tool === "clone";
+    tool === "clone" ||
+    tool === "section";
   const showShapeControls =
     tool === "box" ||
     tool === "highlight" ||
@@ -270,13 +403,18 @@ export function PdfEditor() {
     selectedOverlay?.type === "arrow";
   const showTextControls = tool === "text" || selectedOverlay?.type === "text";
   const showImageControls = selectedOverlay?.type === "image";
+  const showSectionControls = selectedOverlay?.type === "section";
 
   const selectTool = (nextTool: Tool) => {
     setTool(nextTool);
+    setSectionMenu(null);
+    setSectionHover(null);
     if (nextTool === "line" || nextTool === "arrow") {
       setPickedColor("#111111");
     } else if (nextTool === "highlight") {
       setPickedColor("#ffe66d");
+    } else if (nextTool === "section") {
+      setStatus("Section tool active. Move near the end of a column or section to add the next block.");
     }
   };
 
@@ -305,6 +443,7 @@ export function PdfEditor() {
       setOverlays(previous);
       setSelectedId(null);
       setEditingTextId(null);
+      setEditingSectionId(null);
       return {
         past: items.past.slice(0, -1),
         future: [overlays, ...items.future],
@@ -320,6 +459,7 @@ export function PdfEditor() {
       setOverlays(next);
       setSelectedId(null);
       setEditingTextId(null);
+      setEditingSectionId(null);
       return {
         past: [...items.past, overlays],
         future: items.future.slice(1),
@@ -355,6 +495,9 @@ export function PdfEditor() {
     setHistory({ past: [], future: [] });
     setSelectedId(null);
     setEditingTextId(null);
+    setEditingSectionId(null);
+    setSectionHover(null);
+    setSectionMenu(null);
     setPreviewMode(false);
     setFitAfterRender(true);
     setStatus(`${file.name} loaded. Pick a tool and click on the page.`);
@@ -423,6 +566,143 @@ export function PdfEditor() {
     };
   };
 
+  const getContentEndPlacement = (point: { x: number; y: number }) => {
+    if (!pageInfo) return null;
+
+    const base = getSectionPlacement(point, pageInfo);
+    const margin = Math.max(28, pageInfo.width * 0.055);
+    const sectionHeight = 132;
+    const canvas = canvasRef.current;
+    const contentRows: Array<{ top: number; bottom: number; source: "pdf" | "overlay" }> = [];
+
+    if (canvas) {
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (context) {
+        const scaleX = canvas.width / pageInfo.width;
+        const scaleY = canvas.height / pageInfo.height;
+        const startX = Math.max(0, Math.floor(base.x * scaleX));
+        const endX = Math.min(canvas.width - 1, Math.ceil((base.x + base.width) * scaleX));
+        const startY = Math.max(0, Math.floor(margin * scaleY));
+        const endY = Math.min(canvas.height - 1, Math.ceil((pageInfo.height - margin) * scaleY));
+        const stepX = Math.max(2, Math.floor((endX - startX) / 140));
+        const stepY = Math.max(2, Math.floor(canvas.height / 340));
+        let runStart: number | null = null;
+        let lastInkY: number | null = null;
+
+        try {
+          for (let y = startY; y <= endY; y += stepY) {
+            const bandHeight = Math.min(5, endY - y + 1);
+            const row = context.getImageData(startX, y, Math.max(1, endX - startX), bandHeight).data;
+            let inkHits = 0;
+
+            for (let x = 0; x < row.length; x += stepX * 4) {
+              const red = row[x];
+              const green = row[x + 1];
+              const blue = row[x + 2];
+              const alpha = row[x + 3];
+              const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+              if (alpha > 20 && luminance < 222) {
+                inkHits += 1;
+                if (inkHits >= 3) break;
+              }
+            }
+
+            if (inkHits >= 3) {
+              runStart ??= y;
+              lastInkY = y + bandHeight;
+            } else if (runStart !== null && lastInkY !== null && y - lastInkY > stepY * 3) {
+              contentRows.push({
+                top: Math.max(margin, runStart / scaleY),
+                bottom: Math.min(pageInfo.height - margin, lastInkY / scaleY),
+                source: "pdf",
+              });
+              runStart = null;
+              lastInkY = null;
+            }
+          }
+
+          if (runStart !== null && lastInkY !== null) {
+            contentRows.push({
+              top: Math.max(margin, runStart / scaleY),
+              bottom: Math.min(pageInfo.height - margin, lastInkY / scaleY),
+              source: "pdf",
+            });
+          }
+        } catch {
+          contentRows.length = 0;
+        }
+      }
+    }
+
+    for (const overlay of currentOverlays) {
+      const overlapsColumn = overlay.x < base.x + base.width && overlay.x + overlay.width > base.x;
+      if (overlapsColumn) {
+        contentRows.push({
+          top: overlay.y,
+          bottom: overlay.y + overlay.height,
+          source: "overlay",
+        });
+      }
+    }
+
+    const mergedRows = contentRows
+      .filter((row) => row.bottom > margin && row.top < pageInfo.height - margin)
+      .sort((a, b) => a.top - b.top)
+      .reduce<Array<{ top: number; bottom: number; source: "pdf" | "overlay" }>>((rows, row) => {
+        const previous = rows.at(-1);
+        if (previous && row.top <= previous.bottom + 8) {
+          previous.bottom = Math.max(previous.bottom, row.bottom);
+          previous.source = previous.source === "overlay" || row.source === "overlay" ? "overlay" : "pdf";
+          return rows;
+        }
+        rows.push({ ...row });
+        return rows;
+      }, []);
+
+    const contentBlocks = mergedRows.reduce<Array<{ top: number; bottom: number; source: "pdf" | "overlay" }>>(
+      (blocks, row) => {
+        const previous = blocks.at(-1);
+        const blockGap = previous?.source === "overlay" || row.source === "overlay" ? 20 : 16;
+        if (previous && row.top <= previous.bottom + blockGap) {
+          previous.bottom = Math.max(previous.bottom, row.bottom);
+          previous.source = previous.source === "overlay" || row.source === "overlay" ? "overlay" : "pdf";
+          return blocks;
+        }
+        blocks.push({ ...row });
+        return blocks;
+      },
+      [],
+    );
+
+    const pointedBlock =
+      contentBlocks
+        .map((block) => ({
+          block,
+          distance:
+            point.y >= block.bottom - 34 && point.y <= block.bottom + 92
+              ? 0
+              : Math.abs(point.y - block.bottom),
+        }))
+        .filter((item) => item.distance <= 92)
+        .sort((a, b) => a.distance - b.distance || b.block.bottom - a.block.bottom)[0]?.block || null;
+    const lastBlock = contentBlocks.at(-1) || null;
+    const targetBlock = pointedBlock || (lastBlock && point.y >= lastBlock.bottom - 72 ? lastBlock : null);
+
+    if (!targetBlock) return null;
+
+    const contentBottom = Math.max(margin, targetBlock.bottom);
+    const suggestedY = Math.max(margin, Math.min(pageInfo.height - sectionHeight - margin, contentBottom + 18));
+    const isNearInsertionPoint =
+      point.y >= Math.max(margin, targetBlock.bottom - 42) &&
+      point.y <= Math.min(pageInfo.height - margin, targetBlock.bottom + 110);
+    if (!isNearInsertionPoint) return null;
+
+    return {
+      ...base,
+      y: suggestedY,
+    };
+  };
+
   const pickCanvasColor = (event: PointerEvent<HTMLElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -467,9 +747,44 @@ export function PdfEditor() {
     commitOverlays([...overlays, overlay]);
     setSelectedId(overlay.id);
     setEditingTextId(overlay.id);
+    setEditingSectionId(null);
     setTool("select");
     setTextValue("");
     setStatus("Text added. Edit it directly on the page, or drag the handle to move it.");
+  };
+
+  const addSectionOverlay = (template: SectionTemplate, placement: SectionPlacement) => {
+    if (!pageInfo) return;
+
+    const height = Math.min(170, Math.max(118, pageInfo.height - placement.y - 28));
+    const overlay: Overlay = {
+      id: crypto.randomUUID(),
+      page: pageNumber,
+      type: "section",
+      x: Math.max(0, Math.min(pageInfo.width - placement.width, placement.x)),
+      y: Math.max(0, Math.min(pageInfo.height - height, placement.y)),
+      width: placement.width,
+      height,
+      color: template.titleColor,
+      fontSize: 10,
+      titleSize: 12,
+      sectionTitle: template.title,
+      sectionBody: template.body,
+      sectionTemplate: template.id,
+      sectionTitleColor: template.titleColor,
+      sectionBodyColor: template.bodyColor,
+      sectionAccentColor: template.accentColor,
+    };
+
+    commitOverlays([...overlays, overlay]);
+    setSelectedId(overlay.id);
+    setEditingSectionId(overlay.id);
+    setTextColor(overlay.color);
+    setFontSize(overlay.fontSize || 10);
+    setTool("select");
+    setSectionMenu(null);
+    setSectionHover(null);
+    setStatus(`${template.label} section added. Edit the fields in the sidebar, then drag or resize it on the page.`);
   };
 
   const copyCanvasArea = (box: ReturnType<typeof getBoxFromPoints>) => {
@@ -599,6 +914,7 @@ export function PdfEditor() {
       commitOverlays([...overlays, overlay]);
       setSelectedId(overlay.id);
       setEditingTextId(null);
+      setEditingSectionId(null);
       setTool("select");
       setStatus("Signature scanned. Drag the Move handle to place it.");
     } catch (error) {
@@ -713,6 +1029,7 @@ export function PdfEditor() {
 
     commitOverlays([...overlays, overlay]);
     setSelectedId(overlay.id);
+    setEditingSectionId(null);
     setShowSignaturePad(false);
     setTool("select");
     setStatus("Drawn signature added. Drag the Move handle to place it.");
@@ -721,6 +1038,8 @@ export function PdfEditor() {
   const handlePagePointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!pdfDocProxy) return;
     setEditingTextId(null);
+    setEditingSectionId(null);
+    setSectionMenu(null);
     if (tool === "pick") {
       pickCanvasColor(event);
       return;
@@ -759,10 +1078,30 @@ export function PdfEditor() {
       addTextOverlay(event);
       return;
     }
+    if (tool === "section" && pageInfo) {
+      const placement = getContentEndPlacement(getPagePoint(event));
+      if (!placement) {
+        setSectionHover(null);
+        setStatus("Move near the end of the current column or section to add a new section.");
+        return;
+      }
+      setSectionHover(placement);
+      setSectionMenu(placement);
+      setSelectedId(null);
+      setStatus("Choose a section template to add it here.");
+      return;
+    }
     setSelectedId(null);
+    setEditingTextId(null);
+    setEditingSectionId(null);
   };
 
   const handlePagePointerMove = (event: PointerEvent<HTMLElement>) => {
+    if (tool === "section" && !drawingState && pageInfo && !sectionMenu) {
+      setSectionHover(getContentEndPlacement(getPagePoint(event)));
+      return;
+    }
+
     if (!drawingState || !pageInfo) return;
     const point = getPagePoint(event);
     setDrawingState({
@@ -872,6 +1211,7 @@ export function PdfEditor() {
     event.stopPropagation();
     recordHistory();
     setEditingTextId(null);
+    setEditingSectionId(null);
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedId(overlay.id);
     setDragState({
@@ -944,6 +1284,7 @@ export function PdfEditor() {
     commitOverlays(overlays.filter((overlay) => overlay.id !== selectedId));
     setSelectedId(null);
     setEditingTextId(null);
+    setEditingSectionId(null);
   }, [commitOverlays, overlays, selectedId]);
 
   const updateOverlay = (id: string, changes: Partial<Overlay>, recordHistory = false) => {
@@ -958,11 +1299,16 @@ export function PdfEditor() {
   const selectOverlay = (overlay: Overlay) => {
     setSelectedId(overlay.id);
     setEditingTextId(overlay.type === "text" ? overlay.id : null);
+    setEditingSectionId(overlay.type === "section" ? overlay.id : null);
     if (overlay.type === "text") {
       setTextValue(overlay.text || "");
       setTextColor(overlay.color);
       setFontSize(overlay.fontSize || 18);
       setStatus("Text selected. Type on the page, or drag the Move handle to reposition it.");
+    } else if (overlay.type === "section") {
+      setTextColor(overlay.color);
+      setFontSize(overlay.fontSize || 10);
+      setStatus("Section selected. Edit the title and content in the sidebar, or move it on the page.");
     } else {
       if (overlay.type === "box" || overlay.type === "highlight" || overlay.type === "line" || overlay.type === "arrow") {
         setPickedColor(overlay.color);
@@ -970,7 +1316,7 @@ export function PdfEditor() {
       if (overlay.type === "line" || overlay.type === "arrow") {
         setStrokeWidth(overlay.strokeWidth || 3);
       }
-      setStatus(`${overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.type === "arrow" ? "Arrow" : overlay.type === "line" ? "Line" : overlay.type === "highlight" ? "Highlight" : "Box"} selected. Drag it, resize it, or delete it.`);
+      setStatus(`${getOverlayLabel(overlay)} selected. Drag it, resize it, or delete it.`);
     }
   };
 
@@ -980,6 +1326,40 @@ export function PdfEditor() {
     if (selectedId) {
       updateOverlay(selectedId, { color });
     }
+  };
+
+  const updateSelectedSectionColor = (
+    field: "sectionTitleColor" | "sectionBodyColor" | "sectionAccentColor",
+    color: string,
+  ) => {
+    if (!isHexColor(color) || selectedOverlay?.type !== "section") return;
+    if (field === "sectionTitleColor") {
+      setTextColor(color);
+      updateOverlay(selectedOverlay.id, { color, sectionTitleColor: color });
+      return;
+    }
+    updateOverlay(selectedOverlay.id, { [field]: color });
+  };
+
+  const updateSectionBody = (overlay: Overlay, value: string) => {
+    updateOverlay(overlay.id, { sectionBody: value });
+  };
+
+  const continueSectionRow = (event: ReactKeyboardEvent<HTMLTextAreaElement>, overlay: Overlay) => {
+    if (event.key !== "Enter" || event.shiftKey || !isBulletSection(overlay)) return;
+
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const value = target.value;
+    const nextValue = `${value.slice(0, start)}\n- ${value.slice(end)}`;
+    updateSectionBody(overlay, nextValue);
+
+    window.requestAnimationFrame(() => {
+      target.selectionStart = start + 3;
+      target.selectionEnd = start + 3;
+    });
   };
 
   const updateSelectedBoxColor = (color: string) => {
@@ -1049,7 +1429,8 @@ export function PdfEditor() {
     commitOverlays([...overlays, duplicate]);
     setSelectedId(duplicate.id);
     setEditingTextId(duplicate.type === "text" ? duplicate.id : null);
-    setStatus(`${duplicate.type === "box" ? "Box" : duplicate.type === "highlight" ? "Highlight" : duplicate.type === "arrow" ? "Arrow" : duplicate.type === "line" ? "Line" : duplicate.type === "image" ? duplicate.imageLabel || "Image" : "Text"} duplicated.`);
+    setEditingSectionId(duplicate.type === "section" ? duplicate.id : null);
+    setStatus(`${getOverlayLabel(duplicate)} duplicated.`);
   }, [commitOverlays, overlays, pageInfo, selectedOverlay]);
 
   const handleDrop = async (event: DragEvent<HTMLElement>) => {
@@ -1113,6 +1494,9 @@ export function PdfEditor() {
         setTool("select");
         setDrawingState(null);
         setEditingTextId(null);
+        setEditingSectionId(null);
+        setSectionHover(null);
+        setSectionMenu(null);
         setPreviewMode(false);
         setToolsCollapsed(false);
         setStatus("Select tool active.");
@@ -1144,6 +1528,7 @@ export function PdfEditor() {
     try {
       const output = await PDFDocument.load(pdfBytes.slice(0));
       const font = await output.embedFont(StandardFonts.Helvetica);
+      const boldFont = await output.embedFont(StandardFonts.HelveticaBold);
 
       for (const overlay of overlays) {
         const page = output.getPage(overlay.page - 1);
@@ -1220,6 +1605,62 @@ export function PdfEditor() {
             page.drawLine({ start: end, end: left, thickness, color: rgb(color.r, color.g, color.b) });
             page.drawLine({ start: end, end: right, thickness, color: rgb(color.r, color.g, color.b) });
           }
+        } else if (overlay.type === "section") {
+          const titleColor = hexToRgb(overlay.sectionTitleColor || overlay.color);
+          const bodyColor = hexToRgb(overlay.sectionBodyColor || overlay.color);
+          const accentColor = hexToRgb(overlay.sectionAccentColor || overlay.color);
+          const titleSize = (overlay.titleSize || 12) * scaleY;
+          const bodySize = (overlay.fontSize || 10) * scaleY;
+          const lineHeight = bodySize * 1.25;
+          const top = y + overlay.height * scaleY;
+          const accentWidth = Math.max(2, 3 * scaleX);
+          const contentX = x + accentWidth + 5 * scaleX;
+          const titleY = top - titleSize - 2 * scaleY;
+          const dividerY = titleY - titleSize * 0.55;
+          const bodyStartY = dividerY - lineHeight * 0.9;
+          const bodyLines = getSectionLines(overlay.sectionBody);
+
+          page.drawRectangle({
+            x,
+            y,
+            width: accentWidth,
+            height: overlay.height * scaleY,
+            color: rgb(accentColor.r, accentColor.g, accentColor.b),
+            opacity: 0.95,
+            borderWidth: 0,
+          });
+
+          if (overlay.sectionTitle) {
+            page.drawText(overlay.sectionTitle, {
+              x: contentX,
+              y: titleY,
+              size: titleSize,
+              font: boldFont,
+              color: rgb(titleColor.r, titleColor.g, titleColor.b),
+              maxWidth: overlay.width * scaleX - accentWidth,
+            });
+          }
+
+          page.drawLine({
+            start: { x: contentX, y: dividerY },
+            end: { x: x + overlay.width * scaleX, y: dividerY },
+            thickness: Math.max(0.6, scaleY),
+            color: rgb(accentColor.r, accentColor.g, accentColor.b),
+            opacity: 0.85,
+          });
+
+          bodyLines.forEach((line, index) => {
+            const lineY = bodyStartY - index * lineHeight;
+            if (lineY < y + bodySize * 0.5) return;
+            page.drawText(line, {
+              x: contentX,
+              y: lineY,
+              size: bodySize,
+              font,
+              color: rgb(bodyColor.r, bodyColor.g, bodyColor.b),
+              maxWidth: overlay.width * scaleX - accentWidth,
+            });
+          });
         } else if (overlay.text) {
           const color = hexToRgb(overlay.color);
           page.drawText(overlay.text, {
@@ -1273,6 +1714,7 @@ export function PdfEditor() {
     const nextPreviewMode = !previewMode;
     setPreviewMode(nextPreviewMode);
     setEditingTextId(null);
+    setEditingSectionId(null);
     setDrawingState(null);
     setToolsCollapsed(nextPreviewMode);
     setStatus(nextPreviewMode ? "Preview mode active. Only the document is shown." : "Editor mode active.");
@@ -1361,9 +1803,9 @@ export function PdfEditor() {
                 {tool === "pick"
                   ? "Click the PDF to sample a pixel color."
                   : isPlacing
-                    ? `${tool === "box" ? "Drag on the PDF to draw a cover box." : tool === "highlight" ? "Drag on the PDF to highlight an area." : tool === "line" ? "Drag on the PDF to draw a line." : tool === "arrow" ? "Drag on the PDF to draw an arrow." : tool === "clone" ? "Drag around an area to copy it." : "Click the PDF to place editable text."}`
+                    ? `${tool === "box" ? "Drag on the PDF to draw a cover box." : tool === "highlight" ? "Drag on the PDF to highlight an area." : tool === "line" ? "Drag on the PDF to draw a line." : tool === "arrow" ? "Drag on the PDF to draw an arrow." : tool === "clone" ? "Drag around an area to copy it." : tool === "section" ? "Hover and click where the new section should start." : "Click the PDF to place editable text."}`
                     : selectedOverlay
-                      ? `${selectedOverlay.type === "box" ? "Box" : selectedOverlay.type === "highlight" ? "Highlight" : selectedOverlay.type === "arrow" ? "Arrow" : selectedOverlay.type === "line" ? "Line" : selectedOverlay.type === "image" ? selectedOverlay.imageLabel || "Image" : "Text"} selected.`
+                      ? `${getOverlayLabel(selectedOverlay)} selected.`
                       : "Click an item to select it."}
               </p>
             </div>
@@ -1432,7 +1874,7 @@ export function PdfEditor() {
               Draw signature
             </button>
 
-            {(showShapeControls || showTextControls || showImageControls) ? (
+            {(showShapeControls || showTextControls || showImageControls || showSectionControls) ? (
               <section className="space-y-3">
                 <h2 className="text-xs font-semibold uppercase tracking-normal text-[#69635b]">Style</h2>
                 {showShapeControls ? (
@@ -1596,6 +2038,121 @@ export function PdfEditor() {
                     </label>
                   </>
                 ) : null}
+
+                {showSectionControls ? (
+                  <>
+                    <div className="space-y-2 rounded-md border border-[#ded8cc] bg-white p-3">
+                      <div className="text-sm font-medium">Section colors</div>
+                      {[
+                        {
+                          label: "Title",
+                          field: "sectionTitleColor" as const,
+                          value: selectedOverlay?.sectionTitleColor || selectedOverlay?.color || "#111111",
+                        },
+                        {
+                          label: "Rows",
+                          field: "sectionBodyColor" as const,
+                          value: selectedOverlay?.sectionBodyColor || selectedOverlay?.color || "#333333",
+                        },
+                        {
+                          label: "Accent",
+                          field: "sectionAccentColor" as const,
+                          value: selectedOverlay?.sectionAccentColor || selectedOverlay?.color || "#146c63",
+                        },
+                      ].map((item) => (
+                        <label key={item.field} className="flex items-center justify-between gap-3 text-sm">
+                          <span>{item.label}</span>
+                          <span className="flex items-center gap-2">
+                            <input
+                              className="h-8 w-10 rounded-md border border-[#ded8cc] bg-white p-1"
+                              type="color"
+                              value={item.value}
+                              onFocus={recordHistory}
+                              onChange={(event) => updateSelectedSectionColor(item.field, event.target.value)}
+                            />
+                            <input
+                              className="h-8 w-24 rounded-md border border-[#ded8cc] bg-white px-2 font-mono text-xs"
+                              value={item.value}
+                              onFocus={recordHistory}
+                              onChange={(event) => updateSelectedSectionColor(item.field, event.target.value)}
+                            />
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+
+                    <label className="block text-sm font-medium">
+                      Section title
+                      <input
+                        className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                        value={selectedOverlay?.sectionTitle || ""}
+                        onFocus={recordHistory}
+                        onChange={(event) => {
+                          if (selectedOverlay?.type === "section") {
+                            updateOverlay(selectedOverlay.id, { sectionTitle: event.target.value });
+                          }
+                        }}
+                      />
+                    </label>
+
+                    <label className="block text-sm font-medium">
+                      Section content
+                      <textarea
+                        className="mt-2 min-h-28 w-full resize-y rounded-md border border-[#ded8cc] bg-white px-3 py-2 text-sm"
+                        value={selectedOverlay?.sectionBody || ""}
+                        onFocus={recordHistory}
+                        onKeyDown={(event) => {
+                          if (selectedOverlay?.type === "section") {
+                            continueSectionRow(event, selectedOverlay);
+                          }
+                        }}
+                        onChange={(event) => {
+                          if (selectedOverlay?.type === "section") {
+                            updateOverlay(selectedOverlay.id, { sectionBody: event.target.value });
+                          }
+                        }}
+                      />
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block text-sm font-medium">
+                        Title size
+                        <input
+                          className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                          min={8}
+                          max={42}
+                          type="number"
+                          value={selectedOverlay?.titleSize || 12}
+                          onFocus={recordHistory}
+                          onChange={(event) => {
+                            const nextSize = Math.max(8, Math.min(42, Number(event.target.value) || 12));
+                            if (selectedOverlay?.type === "section") {
+                              updateOverlay(selectedOverlay.id, { titleSize: nextSize });
+                            }
+                          }}
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">
+                        Body size
+                        <input
+                          className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                          min={7}
+                          max={36}
+                          type="number"
+                          value={fontSize}
+                          onFocus={recordHistory}
+                          onChange={(event) => {
+                            const nextSize = Math.max(7, Math.min(36, Number(event.target.value) || 10));
+                            setFontSize(nextSize);
+                            if (selectedOverlay?.type === "section") {
+                              updateOverlay(selectedOverlay.id, { fontSize: nextSize });
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </>
+                ) : null}
               </section>
             ) : null}
 
@@ -1667,7 +2224,7 @@ export function PdfEditor() {
                         }}
                       >
                         <span className="truncate">
-                          {overlay.type === "box" ? "Box" : overlay.type === "highlight" ? "Highlight" : overlay.type === "arrow" ? "Arrow" : overlay.type === "line" ? "Line" : overlay.type === "image" ? overlay.imageLabel || "Image" : overlay.text?.trim() || "Text"}
+                          {getOverlayLabel(overlay)}
                         </span>
                         <span className="shrink-0 text-xs text-[#69635b]">
                           p{overlay.page} - {overlays.length - index}
@@ -1785,12 +2342,85 @@ export function PdfEditor() {
                 onPointerDown={previewMode ? undefined : handlePagePointerDown}
                 onPointerMove={previewMode ? undefined : handlePagePointerMove}
                 onPointerUp={previewMode ? undefined : finishDrawing}
-                onPointerLeave={previewMode ? undefined : finishDrawing}
+                onPointerLeave={
+                  previewMode
+                    ? undefined
+                    : () => {
+                        if (tool === "section" && !sectionMenu) {
+                          setSectionHover(null);
+                        }
+                        finishDrawing();
+                      }
+                }
               >
                 <canvas ref={canvasRef} className="absolute inset-0 bg-white" />
                 {!previewMode && isPlacing ? (
                   <div className="pointer-events-none absolute left-3 top-3 z-20 rounded-md border border-[#146c63] bg-white/95 px-3 py-2 text-xs font-semibold text-[#146c63] shadow-sm">
-                    {tool === "box" ? "Drag to draw box" : tool === "highlight" ? "Drag to highlight" : tool === "line" ? "Drag to draw line" : tool === "arrow" ? "Drag to draw arrow" : tool === "clone" ? "Drag to copy area" : "Click to place text"}
+                    {tool === "box" ? "Drag to draw box" : tool === "highlight" ? "Drag to highlight" : tool === "line" ? "Drag to draw line" : tool === "arrow" ? "Drag to draw arrow" : tool === "clone" ? "Drag to copy area" : tool === "section" ? "Move to the end of a column" : "Click to place text"}
+                  </div>
+                ) : null}
+                {!previewMode && tool === "section" && (sectionMenu || sectionHover) ? (
+                  <div
+                    className="absolute z-30"
+                    style={{
+                      left: (sectionMenu || sectionHover)?.x ? (sectionMenu || sectionHover)!.x * zoom : 0,
+                      top: (sectionMenu || sectionHover)?.y ? (sectionMenu || sectionHover)!.y * zoom : 0,
+                      width: (sectionMenu || sectionHover)?.width ? (sectionMenu || sectionHover)!.width * zoom : 0,
+                    }}
+                  >
+                    <div className="pointer-events-none absolute left-0 right-0 top-4 h-px bg-[#146c63]" />
+                    <div className="pointer-events-none absolute left-0 top-1 h-7 w-px bg-[#146c63]/45" />
+                    <div className="pointer-events-none absolute right-0 top-1 h-7 w-px bg-[#146c63]/45" />
+                    <button
+                      className="relative z-10 inline-flex h-8 items-center gap-1.5 rounded-full border border-[#146c63] bg-white px-3 text-xs font-semibold text-[#146c63] shadow-md shadow-black/10 transition hover:-translate-y-0.5 hover:bg-[#e5f3ef]"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (sectionHover) setSectionMenu(sectionHover);
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    >
+                      <Plus size={14} />
+                      Add section
+                    </button>
+                    {sectionMenu ? (
+                      <div
+                        className="relative z-20 mt-2 w-64 rounded-md border border-[#ded8cc] bg-[#fffdfa] p-2 shadow-xl shadow-black/15"
+                        onPointerDown={(event) => event.stopPropagation()}
+                      >
+                        <div className="mb-2 border-b border-[#ded8cc] px-2 pb-2">
+                          <div className="text-sm font-semibold">Add next section</div>
+                          <div className="mt-0.5 text-xs text-[#69635b]">
+                            Snapped below the last visible content in this column.
+                          </div>
+                        </div>
+                        <div className="grid gap-1">
+                          {sectionTemplates.map((template) => (
+                            <button
+                              key={template.id}
+                              className="flex min-h-11 items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm font-medium transition hover:bg-[#f5f3ef]"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                addSectionOverlay(template, sectionMenu);
+                              }}
+                            >
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span
+                                  className="h-7 w-1.5 shrink-0 rounded-full"
+                                  style={{ background: template.accentColor }}
+                                />
+                                <span className="min-w-0">
+                                <span className="block" style={{ color: template.titleColor }}>{template.label}</span>
+                                <span className="block text-xs font-normal text-[#69635b]">{template.title}</span>
+                                </span>
+                              </span>
+                              <Plus size={14} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {!previewMode && drawingState ? (
@@ -1907,7 +2537,8 @@ export function PdfEditor() {
                             overlay.type === "highlight" ||
                             overlay.type === "line" ||
                             overlay.type === "arrow" ||
-                            overlay.type === "image"
+                            overlay.type === "image" ||
+                            overlay.type === "section"
                           ? "outline outline-1 outline-transparent hover:outline-[#146c63]/35"
                           : "outline outline-1 outline-transparent"
                     }`}
@@ -1937,7 +2568,99 @@ export function PdfEditor() {
                     onPointerMove={continueDrag}
                     onPointerUp={() => setDragState(null)}
                   >
-                    {overlay.type === "highlight" ? (
+                    {overlay.type === "section" ? (
+                      editingSectionId === overlay.id ? (
+                        <div
+                          className="grid h-full w-full overflow-hidden rounded-sm bg-white/80 shadow-[0_0_0_1px_rgba(20,108,99,0.14)]"
+                          style={{ gridTemplateColumns: `${Math.max(3, 4 * zoom)}px 1fr` }}
+                        >
+                          <div style={{ background: overlay.sectionAccentColor || overlay.color }} />
+                          <div className="min-w-0 px-1.5 py-1">
+                            <input
+                              className="w-full border-0 bg-white/80 font-bold uppercase outline-none"
+                              style={{
+                                color: overlay.sectionTitleColor || overlay.color,
+                                fontSize: (overlay.titleSize || 12) * zoom,
+                                lineHeight: 1.05,
+                              }}
+                              value={overlay.sectionTitle || ""}
+                              onFocus={recordHistory}
+                              onChange={(event) => updateOverlay(overlay.id, { sectionTitle: event.target.value })}
+                              onPointerDown={(event) => event.stopPropagation()}
+                            />
+                            <div
+                              className="my-1 w-full"
+                              style={{
+                                height: Math.max(1, zoom),
+                                background: overlay.sectionAccentColor || overlay.color,
+                              }}
+                            />
+                            <textarea
+                              className="w-full resize-none border-0 bg-white/80 outline-none"
+                              style={{
+                                color: overlay.sectionBodyColor || overlay.color,
+                                fontSize: (overlay.fontSize || 10) * zoom,
+                                height: Math.max(24, overlay.height * zoom - (overlay.titleSize || 12) * zoom - 12),
+                                lineHeight: 1.25,
+                              }}
+                              value={overlay.sectionBody || ""}
+                              onFocus={recordHistory}
+                              onKeyDown={(event) => continueSectionRow(event, overlay)}
+                              onChange={(event) => updateSectionBody(overlay, event.target.value)}
+                              onPointerDown={(event) => event.stopPropagation()}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className="grid h-full w-full overflow-hidden rounded-sm bg-white/15"
+                          style={{ gridTemplateColumns: `${Math.max(3, 4 * zoom)}px 1fr` }}
+                        >
+                          <div style={{ background: overlay.sectionAccentColor || overlay.color }} />
+                          <div className="min-w-0 px-1.5 py-1">
+                            <div
+                              className="truncate font-bold uppercase"
+                              style={{
+                                color: overlay.sectionTitleColor || overlay.color,
+                                fontSize: (overlay.titleSize || 12) * zoom,
+                                lineHeight: 1.05,
+                              }}
+                            >
+                              {overlay.sectionTitle || "SECTION"}
+                            </div>
+                            <div
+                              className="my-1 w-full"
+                              style={{
+                                height: Math.max(1, zoom),
+                                background: overlay.sectionAccentColor || overlay.color,
+                              }}
+                            />
+                            <div
+                              className="space-y-0.5 overflow-hidden"
+                              style={{
+                                color: overlay.sectionBodyColor || overlay.color,
+                                fontSize: (overlay.fontSize || 10) * zoom,
+                                lineHeight: 1.25,
+                              }}
+                            >
+                              {getSectionLines(overlay.sectionBody).map((line, index) => (
+                                <div key={`${overlay.id}-${index}`} className="flex min-w-0 gap-1">
+                                  {line.trimStart().startsWith("- ") ? (
+                                    <span
+                                      className="mt-[0.35em] h-[0.38em] w-[0.38em] shrink-0 rounded-full"
+                                      style={{ background: overlay.sectionAccentColor || overlay.color }}
+                                    />
+                                  ) : null}
+                                  <span className="min-w-0 break-words">
+                                    {line.trimStart().startsWith("- ") ? line.trimStart().slice(2) : line}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    ) : overlay.type === "highlight" ? (
                       <div className="h-full w-full" style={{ background: overlay.color, opacity: 0.38 }} />
                     ) : overlay.type === "line" || overlay.type === "arrow" ? (
                       <svg className="h-full w-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
