@@ -104,8 +104,20 @@ type SectionPlacement = {
   column: "left" | "right" | "full";
 };
 
+type PdfTextItem = {
+  str: string;
+  transform: number[];
+  width?: number;
+  height?: number;
+};
+
+type PdfTextContent = {
+  items: PdfTextItem[];
+};
+
 type PdfPageProxy = {
   getViewport: (options: { scale: number }) => { width: number; height: number };
+  getTextContent: () => Promise<PdfTextContent>;
   render: (options: {
     canvasContext: CanvasRenderingContext2D;
     viewport: { width: number; height: number };
@@ -115,6 +127,41 @@ type PdfPageProxy = {
 type PdfDocumentProxy = {
   numPages: number;
   getPage: (pageNumber: number) => Promise<PdfPageProxy>;
+};
+
+type ResumeSectionKind =
+  | "summary"
+  | "experience"
+  | "education"
+  | "skills"
+  | "projects"
+  | "certifications"
+  | "languages"
+  | "custom";
+
+type ResumeSection = {
+  id: string;
+  kind: ResumeSectionKind;
+  title: string;
+  items: string[];
+};
+
+type ResumeDraft = {
+  name: string;
+  headline: string;
+  contact: string[];
+  summary: string;
+  sections: ResumeSection[];
+  confidence: number;
+  source: string;
+};
+
+type ResumeLine = {
+  text: string;
+  page: number;
+  x: number;
+  y: number;
+  fontSize: number;
 };
 
 const toolOptions: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -312,6 +359,142 @@ function isBulletSection(overlay: Overlay) {
   );
 }
 
+function normalizeHeading(value: string) {
+  return value.toLowerCase().replace(/[^a-z]/g, "");
+}
+
+function getResumeSectionKind(text: string): ResumeSectionKind | null {
+  const heading = normalizeHeading(text);
+  if (["summary", "profile", "objective", "aboutme"].includes(heading)) return "summary";
+  if (["experience", "workexperience", "employment", "employmenthistory", "professionalexperience"].includes(heading)) return "experience";
+  if (["education", "academicbackground"].includes(heading)) return "education";
+  if (["skills", "technicalskills", "skillstools", "skillsandtools"].includes(heading)) return "skills";
+  if (["projects", "personalprojects"].includes(heading)) return "projects";
+  if (["certifications", "certificates", "licenses"].includes(heading)) return "certifications";
+  if (["languages"].includes(heading)) return "languages";
+  return null;
+}
+
+function isLikelyContactLine(text: string) {
+  return /@|(\+?\d[\d\s().-]{6,})|linkedin|github|portfolio|www\.|https?:\/\//i.test(text);
+}
+
+function cleanResumeItem(text: string) {
+  return text.replace(/^[\s\-\u2022*]+/, "").replace(/\s+/g, " ").trim();
+}
+
+function splitSkillItems(items: string[]) {
+  return items
+    .flatMap((item) => item.split(/[,|;]+/))
+    .map(cleanResumeItem)
+    .filter(Boolean);
+}
+
+function buildResumeDraft(lines: ResumeLine[], source: string): ResumeDraft {
+  const orderedLines = lines
+    .map((line) => ({ ...line, text: line.text.trim() }))
+    .filter((line) => line.text.length > 1)
+    .sort((a, b) => a.page - b.page || a.y - b.y || a.x - b.x);
+  const topLines = orderedLines.slice(0, 10);
+  const contact = topLines
+    .filter((line) => isLikelyContactLine(line.text))
+    .map((line) => line.text)
+    .slice(0, 4);
+  const nameLine =
+    topLines.find((line) => !isLikelyContactLine(line.text) && line.text.length <= 48 && line.fontSize >= Math.max(...topLines.map((item) => item.fontSize)) - 2) ||
+    topLines.find((line) => !isLikelyContactLine(line.text));
+  const name = nameLine?.text || "Your Name";
+  const headline =
+    topLines.find((line) => line.text !== name && !isLikelyContactLine(line.text) && !getResumeSectionKind(line.text))?.text ||
+    "Professional headline";
+  const sections: ResumeSection[] = [];
+  let current: ResumeSection | null = null;
+  const looseSummary: string[] = [];
+
+  for (const line of orderedLines) {
+    if (line.text === name || line.text === headline || contact.includes(line.text)) continue;
+    const kind = getResumeSectionKind(line.text);
+    const looksLikeHeading = kind && line.text.length <= 32;
+
+    if (looksLikeHeading) {
+      current = {
+        id: crypto.randomUUID(),
+        kind,
+        title: line.text.toUpperCase(),
+        items: [],
+      };
+      sections.push(current);
+      continue;
+    }
+
+    const item = cleanResumeItem(line.text);
+    if (!item) continue;
+
+    if (current) {
+      current.items.push(item);
+    } else if (!isLikelyContactLine(item) && looseSummary.length < 4) {
+      looseSummary.push(item);
+    }
+  }
+
+  for (const section of sections) {
+    if (section.kind === "skills") {
+      section.items = splitSkillItems(section.items).slice(0, 28);
+    } else {
+      section.items = section.items.slice(0, 14);
+    }
+  }
+
+  const summarySection = sections.find((section) => section.kind === "summary");
+  const summary = summarySection?.items.join(" ") || looseSummary.join(" ") || "Add a short professional summary.";
+  const visibleSections = sections.filter((section) => section.kind !== "summary" && section.items.length);
+  const confidence = Math.min(96, Math.max(42, 46 + visibleSections.length * 9 + contact.length * 3 + (summary.length > 40 ? 8 : 0)));
+
+  return {
+    name,
+    headline,
+    contact,
+    summary,
+    sections: visibleSections.length
+      ? visibleSections
+      : [
+          {
+            id: crypto.randomUUID(),
+            kind: "experience",
+            title: "EXPERIENCE",
+            items: ["Add your recent role, company, and strongest achievements."],
+          },
+          {
+            id: crypto.randomUUID(),
+            kind: "skills",
+            title: "SKILLS",
+            items: ["Communication", "Leadership", "Problem solving"],
+          },
+        ],
+    confidence,
+    source,
+  };
+}
+
+function wrapPdfText(text: string, maxChars: number) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) lines.push(current);
+  return lines;
+}
+
 function loadImageFromDataUrl(dataUrl: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -372,6 +555,12 @@ export function PdfEditor() {
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
   const [sectionHover, setSectionHover] = useState<SectionPlacement | null>(null);
   const [sectionMenu, setSectionMenu] = useState<SectionPlacement | null>(null);
+  const [showResumeRebuild, setShowResumeRebuild] = useState(false);
+  const [resumeDraft, setResumeDraft] = useState<ResumeDraft | null>(null);
+  const [resumeStatus, setResumeStatus] = useState("Import a text-based resume PDF to rebuild it into editable sections.");
+  const [isParsingResume, setIsParsingResume] = useState(false);
+  const [isExportingResume, setIsExportingResume] = useState(false);
+  const [resumeAccent, setResumeAccent] = useState("#146c63");
   const [status, setStatus] = useState("Upload a PDF to start editing in your browser.");
 
   const currentOverlays = useMemo(
@@ -499,6 +688,8 @@ export function PdfEditor() {
     setSectionHover(null);
     setSectionMenu(null);
     setPreviewMode(false);
+    setResumeDraft(null);
+    setResumeStatus("PDF loaded. Run Rebuild Resume to extract editable sections.");
     setFitAfterRender(true);
     setStatus(`${file.name} loaded. Pick a tool and click on the page.`);
   };
@@ -1362,6 +1553,231 @@ export function PdfEditor() {
     });
   };
 
+  const extractResumeDraft = async () => {
+    if (!pdfDocProxy) {
+      setResumeStatus("Upload a resume PDF first.");
+      return;
+    }
+
+    setIsParsingResume(true);
+    setResumeStatus("Reading text and layout from the PDF...");
+
+    try {
+      const lines: ResumeLine[] = [];
+
+      for (let pageIndex = 1; pageIndex <= pdfDocProxy.numPages; pageIndex += 1) {
+        const page = await pdfDocProxy.getPage(pageIndex);
+        const viewport = page.getViewport({ scale: 1 });
+        const textContent = await page.getTextContent();
+        const rowMap = new Map<string, ResumeLine[]>();
+
+        for (const item of textContent.items) {
+          const text = item.str.trim();
+          if (!text) continue;
+          const [, , , scaleY, x, rawY] = item.transform;
+          const y = viewport.height - rawY;
+          const fontSizeEstimate = Math.max(7, Math.min(32, Math.abs(scaleY) || item.height || 10));
+          const key = `${pageIndex}-${Math.round(y / 4) * 4}`;
+          const line: ResumeLine = {
+            text,
+            page: pageIndex,
+            x,
+            y,
+            fontSize: fontSizeEstimate,
+          };
+          rowMap.set(key, [...(rowMap.get(key) || []), line]);
+        }
+
+        for (const row of rowMap.values()) {
+          const ordered = row.sort((a, b) => a.x - b.x);
+          lines.push({
+            text: ordered.map((item) => item.text).join(" ").replace(/\s+/g, " ").trim(),
+            page: pageIndex,
+            x: Math.min(...ordered.map((item) => item.x)),
+            y: ordered.reduce((sum, item) => sum + item.y, 0) / ordered.length,
+            fontSize: Math.max(...ordered.map((item) => item.fontSize)),
+          });
+        }
+      }
+
+      if (lines.length < 6) {
+        setResumeStatus("I could not find enough selectable text. OCR fallback is next for scanned PDFs.");
+        return;
+      }
+
+      const draft = buildResumeDraft(lines, fileName.replace(/-edited\.pdf$/i, ".pdf"));
+      setResumeDraft(draft);
+      setResumeStatus(`Rebuilt ${draft.sections.length} editable sections with ${draft.confidence}% confidence.`);
+    } catch (error) {
+      console.error(error);
+      setResumeStatus("Could not rebuild this resume yet. Try another text-based PDF.");
+    } finally {
+      setIsParsingResume(false);
+    }
+  };
+
+  const updateResumeDraft = (changes: Partial<ResumeDraft>) => {
+    setResumeDraft((draft) => (draft ? { ...draft, ...changes } : draft));
+  };
+
+  const updateResumeSection = (id: string, changes: Partial<ResumeSection>) => {
+    setResumeDraft((draft) =>
+      draft
+        ? {
+            ...draft,
+            sections: draft.sections.map((section) => (section.id === id ? { ...section, ...changes } : section)),
+          }
+        : draft,
+    );
+  };
+
+  const addResumeSection = () => {
+    setResumeDraft((draft) =>
+      draft
+        ? {
+            ...draft,
+            sections: [
+              ...draft.sections,
+              {
+                id: crypto.randomUUID(),
+                kind: "custom",
+                title: "CUSTOM SECTION",
+                items: ["Add a new achievement or detail."],
+              },
+            ],
+          }
+        : draft,
+    );
+  };
+
+  const removeResumeSection = (id: string) => {
+    setResumeDraft((draft) =>
+      draft
+        ? {
+            ...draft,
+            sections: draft.sections.filter((section) => section.id !== id),
+          }
+        : draft,
+    );
+  };
+
+  const exportResumeDraft = async () => {
+    if (!resumeDraft) return;
+
+    setIsExportingResume(true);
+    setResumeStatus("Designing your rebuilt resume PDF...");
+
+    try {
+      const output = await PDFDocument.create();
+      let page = output.addPage([595.28, 841.89]);
+      const font = await output.embedFont(StandardFonts.Helvetica);
+      const boldFont = await output.embedFont(StandardFonts.HelveticaBold);
+      const accent = hexToRgb(resumeAccent);
+      const ink = rgb(0.13, 0.12, 0.1);
+      const muted = rgb(0.39, 0.37, 0.33);
+      const margin = 48;
+      const contentWidth = 595.28 - margin * 2;
+      let cursorY = 790;
+
+      const ensureSpace = (needed: number) => {
+        if (cursorY - needed > 54) return;
+        page = output.addPage([595.28, 841.89]);
+        cursorY = 790;
+      };
+
+      const drawWrapped = (text: string, x: number, y: number, size: number, maxChars: number, color = ink) => {
+        const lines = wrapPdfText(text, maxChars);
+        lines.forEach((line, index) => {
+          page.drawText(line, {
+            x,
+            y: y - index * size * 1.35,
+            size,
+            font,
+            color,
+          });
+        });
+        return lines.length * size * 1.35;
+      };
+
+      page.drawText(resumeDraft.name || "Your Name", {
+        x: margin,
+        y: cursorY,
+        size: 27,
+        font: boldFont,
+        color: ink,
+      });
+      cursorY -= 25;
+      page.drawText(resumeDraft.headline || "Professional headline", {
+        x: margin,
+        y: cursorY,
+        size: 11,
+        font,
+        color: rgb(accent.r, accent.g, accent.b),
+      });
+      cursorY -= 18;
+      if (resumeDraft.contact.length) {
+        drawWrapped(resumeDraft.contact.join("  |  "), margin, cursorY, 8.5, 95, muted);
+        cursorY -= 20;
+      }
+      page.drawLine({
+        start: { x: margin, y: cursorY },
+        end: { x: margin + contentWidth, y: cursorY },
+        thickness: 1.5,
+        color: rgb(accent.r, accent.g, accent.b),
+      });
+      cursorY -= 22;
+
+      if (resumeDraft.summary) {
+        ensureSpace(70);
+        page.drawText("SUMMARY", { x: margin, y: cursorY, size: 10, font: boldFont, color: rgb(accent.r, accent.g, accent.b) });
+        cursorY -= 15;
+        cursorY -= drawWrapped(resumeDraft.summary, margin, cursorY, 9.5, 105, ink) + 10;
+      }
+
+      for (const section of resumeDraft.sections) {
+        ensureSpace(80);
+        page.drawText(section.title || "SECTION", {
+          x: margin,
+          y: cursorY,
+          size: 10,
+          font: boldFont,
+          color: rgb(accent.r, accent.g, accent.b),
+        });
+        cursorY -= 14;
+        for (const item of section.items.filter(Boolean)) {
+          ensureSpace(38);
+          page.drawText("-", { x: margin, y: cursorY, size: 9.5, font, color: rgb(accent.r, accent.g, accent.b) });
+          const used = drawWrapped(item, margin + 12, cursorY, 9.5, 96, ink);
+          cursorY -= Math.max(14, used) + 2;
+        }
+        cursorY -= 8;
+      }
+
+      const bytes = await output.save();
+      const pdfArrayBuffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(pdfArrayBuffer).set(bytes);
+      const blob = new Blob([pdfArrayBuffer], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${(resumeDraft.name || "rebuilt-resume").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-resume.pdf`;
+      link.rel = "noopener";
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      window.setTimeout(() => {
+        link.remove();
+        URL.revokeObjectURL(url);
+      }, 1_000);
+      setResumeStatus("Rebuilt resume exported.");
+    } catch (error) {
+      console.error(error);
+      setResumeStatus("Could not export the rebuilt resume.");
+    } finally {
+      setIsExportingResume(false);
+    }
+  };
+
   const updateSelectedBoxColor = (color: string) => {
     if (!isHexColor(color)) return;
     setPickedColor(color);
@@ -1749,6 +2165,18 @@ export function PdfEditor() {
               Contact
             </a>
           </nav>
+          <button
+            className="inline-flex h-10 items-center gap-2 rounded-md border border-[#146c63] bg-white px-4 text-sm font-medium text-[#146c63] hover:bg-[#e5f3ef] disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!pdfDocProxy}
+            type="button"
+            onClick={() => {
+              setShowResumeRebuild(true);
+              setResumeStatus(pdfDocProxy ? "Ready to rebuild this PDF into editable resume sections." : "Upload a resume PDF first.");
+            }}
+          >
+            <List size={17} />
+            Rebuild resume
+          </button>
           <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-[#211f1c] px-4 text-sm font-medium text-white hover:bg-[#3a3630]">
             <FileUp size={18} />
             Upload
@@ -2771,6 +3199,229 @@ export function PdfEditor() {
           <EyeOff size={16} />
           Exit preview
         </button>
+      ) : null}
+      {showResumeRebuild ? (
+        <div className="fixed inset-0 z-50 bg-[#161411]/45 p-3 md:p-6">
+          <div className="mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-md border border-[#ded8cc] bg-[#fffdfa] shadow-2xl">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#ded8cc] px-4 py-3">
+              <div>
+                <h2 className="text-lg font-semibold">Resume Rebuild</h2>
+                <p className="text-sm text-[#69635b]">Extract a resume PDF into editable sections, polish it, then export a clean new PDF.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className="inline-flex h-10 items-center gap-2 rounded-md border border-[#ded8cc] bg-white px-4 text-sm font-medium hover:bg-[#f5f3ef] disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={!pdfDocProxy || isParsingResume}
+                  type="button"
+                  onClick={extractResumeDraft}
+                >
+                  <List size={16} />
+                  {isParsingResume ? "Rebuilding" : resumeDraft ? "Rebuild again" : "Analyze PDF"}
+                </button>
+                <button
+                  className="inline-flex h-10 items-center gap-2 rounded-md bg-[#146c63] px-4 text-sm font-medium text-white hover:bg-[#0f5e56] disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={!resumeDraft || isExportingResume}
+                  type="button"
+                  onClick={exportResumeDraft}
+                >
+                  <Download size={16} />
+                  {isExportingResume ? "Exporting" : "Export resume"}
+                </button>
+                <button
+                  className="flex h-10 w-10 items-center justify-center rounded-md border border-[#ded8cc] bg-white hover:bg-[#f5f3ef]"
+                  type="button"
+                  onClick={() => setShowResumeRebuild(false)}
+                  title="Close"
+                >
+                  <X size={17} />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[360px_1fr]">
+              <aside className="min-h-0 overflow-auto border-b border-[#ded8cc] bg-[#f7fbfa] p-4 lg:border-b-0 lg:border-r">
+                <div className="rounded-md border border-[#ded8cc] bg-white p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold">Import status</div>
+                      <p className="mt-1 text-sm text-[#69635b]">{resumeStatus}</p>
+                    </div>
+                    <div className="rounded-full bg-[#e5f3ef] px-3 py-1 text-xs font-semibold text-[#0f5e56]">
+                      {resumeDraft ? `${resumeDraft.confidence}%` : "Local"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-md border border-[#ded8cc] bg-white p-4">
+                  <div className="mb-3 text-sm font-semibold">Theme</div>
+                  <label className="block text-sm font-medium">
+                    Accent color
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        className="h-10 w-12 rounded-md border border-[#ded8cc] bg-white p-1"
+                        type="color"
+                        value={resumeAccent}
+                        onChange={(event) => setResumeAccent(event.target.value)}
+                      />
+                      <input
+                        className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
+                        value={resumeAccent}
+                        onChange={(event) => {
+                          if (isHexColor(event.target.value)) setResumeAccent(event.target.value);
+                        }}
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <div className="mt-4 rounded-md border border-[#ded8cc] bg-white p-4">
+                  <div className="mb-2 text-sm font-semibold">What this does</div>
+                  <div className="space-y-2 text-sm text-[#69635b]">
+                    <p>Reads selectable PDF text locally in your browser.</p>
+                    <p>Converts it into resume sections you can clean up quickly.</p>
+                    <p>Exports a fresh, structured, ATS-friendly PDF.</p>
+                  </div>
+                </div>
+              </aside>
+
+              <div className="min-h-0 overflow-auto p-4 md:p-6">
+                {!resumeDraft ? (
+                  <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center">
+                    <div className="rounded-md border border-[#ded8cc] bg-white p-6 shadow-sm">
+                      <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-md bg-[#e5f3ef] text-[#146c63]">
+                        <List size={24} />
+                      </div>
+                      <h3 className="text-2xl font-semibold">Rebuild this PDF into an editable resume</h3>
+                      <p className="mt-3 max-w-2xl text-[#69635b]">
+                        This first version handles text-based PDFs. Scanned PDFs will need the OCR slice next, but the editor and export flow are ready for it.
+                      </p>
+                      <button
+                        className="mt-5 inline-flex h-11 items-center gap-2 rounded-md bg-[#146c63] px-5 text-sm font-semibold text-white hover:bg-[#0f5e56] disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={!pdfDocProxy || isParsingResume}
+                        type="button"
+                        onClick={extractResumeDraft}
+                      >
+                        <List size={17} />
+                        {isParsingResume ? "Analyzing PDF" : "Analyze PDF"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+                    <div className="space-y-4">
+                      <section className="rounded-md border border-[#ded8cc] bg-white p-4 shadow-sm">
+                        <h3 className="mb-3 text-sm font-semibold uppercase tracking-normal text-[#69635b]">Header</h3>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="block text-sm font-medium">
+                            Name
+                            <input
+                              className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                              value={resumeDraft.name}
+                              onChange={(event) => updateResumeDraft({ name: event.target.value })}
+                            />
+                          </label>
+                          <label className="block text-sm font-medium">
+                            Headline
+                            <input
+                              className="mt-2 h-10 w-full rounded-md border border-[#ded8cc] bg-white px-3 text-sm"
+                              value={resumeDraft.headline}
+                              onChange={(event) => updateResumeDraft({ headline: event.target.value })}
+                            />
+                          </label>
+                        </div>
+                        <label className="mt-3 block text-sm font-medium">
+                          Contact lines
+                          <textarea
+                            className="mt-2 min-h-20 w-full rounded-md border border-[#ded8cc] bg-white px-3 py-2 text-sm"
+                            value={resumeDraft.contact.join("\n")}
+                            onChange={(event) => updateResumeDraft({ contact: event.target.value.split("\n").filter(Boolean) })}
+                          />
+                        </label>
+                        <label className="mt-3 block text-sm font-medium">
+                          Summary
+                          <textarea
+                            className="mt-2 min-h-24 w-full rounded-md border border-[#ded8cc] bg-white px-3 py-2 text-sm"
+                            value={resumeDraft.summary}
+                            onChange={(event) => updateResumeDraft({ summary: event.target.value })}
+                          />
+                        </label>
+                      </section>
+
+                      {resumeDraft.sections.map((section) => (
+                        <section key={section.id} className="rounded-md border border-[#ded8cc] bg-white p-4 shadow-sm">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <input
+                              className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 text-sm font-semibold uppercase"
+                              value={section.title}
+                              onChange={(event) => updateResumeSection(section.id, { title: event.target.value })}
+                            />
+                            <button
+                              className="flex h-10 w-10 items-center justify-center rounded-md border border-[#ded8cc] bg-white hover:bg-[#f5f3ef]"
+                              type="button"
+                              onClick={() => removeResumeSection(section.id)}
+                              title="Remove section"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                          <textarea
+                            className="min-h-36 w-full rounded-md border border-[#ded8cc] bg-white px-3 py-2 text-sm leading-6"
+                            value={section.items.join("\n")}
+                            onChange={(event) =>
+                              updateResumeSection(section.id, {
+                                items: event.target.value.split("\n").map(cleanResumeItem).filter(Boolean),
+                              })
+                            }
+                          />
+                        </section>
+                      ))}
+
+                      <button
+                        className="inline-flex h-10 items-center gap-2 rounded-md border border-[#ded8cc] bg-white px-4 text-sm font-medium hover:bg-[#f5f3ef]"
+                        type="button"
+                        onClick={addResumeSection}
+                      >
+                        <Plus size={16} />
+                        Add section
+                      </button>
+                    </div>
+
+                    <div className="rounded-md border border-[#ded8cc] bg-white p-6 shadow-sm xl:sticky xl:top-0">
+                      <div className="border-b pb-4" style={{ borderColor: resumeAccent }}>
+                        <div className="text-3xl font-semibold text-[#211f1c]">{resumeDraft.name}</div>
+                        <div className="mt-1 text-sm font-medium" style={{ color: resumeAccent }}>
+                          {resumeDraft.headline}
+                        </div>
+                        <div className="mt-2 text-xs text-[#69635b]">{resumeDraft.contact.join(" | ")}</div>
+                      </div>
+                      <div className="mt-4">
+                        <div className="mb-1 text-xs font-bold uppercase" style={{ color: resumeAccent }}>Summary</div>
+                        <p className="text-sm leading-6 text-[#33302b]">{resumeDraft.summary}</p>
+                      </div>
+                      <div className="mt-4 space-y-4">
+                        {resumeDraft.sections.map((section) => (
+                          <div key={section.id}>
+                            <div className="mb-1 text-xs font-bold uppercase" style={{ color: resumeAccent }}>
+                              {section.title}
+                            </div>
+                            <div className="space-y-1.5 text-sm leading-5 text-[#33302b]">
+                              {section.items.slice(0, 6).map((item, index) => (
+                                <div key={`${section.id}-preview-${index}`} className="flex gap-2">
+                                  <span style={{ color: resumeAccent }}>-</span>
+                                  <span>{item}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
       {showSignaturePad ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
