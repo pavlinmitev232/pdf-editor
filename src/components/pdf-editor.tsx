@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import {
   ArrowUpRight,
@@ -40,6 +40,9 @@ type SectionTemplate = {
   label: string;
   title: string;
   body: string;
+  titleColor: string;
+  bodyColor: string;
+  accentColor: string;
 };
 
 type Overlay = {
@@ -61,6 +64,9 @@ type Overlay = {
   sectionTitle?: string;
   sectionBody?: string;
   sectionTemplate?: SectionTemplateId;
+  sectionTitleColor?: string;
+  sectionBodyColor?: string;
+  sectionAccentColor?: string;
   titleSize?: number;
 };
 
@@ -129,36 +135,54 @@ const sectionTemplates: SectionTemplate[] = [
     label: "Skills",
     title: "SKILLS",
     body: "- Skill one\n- Skill two\n- Skill three",
+    titleColor: "#0f3d3e",
+    bodyColor: "#242424",
+    accentColor: "#17a398",
   },
   {
     id: "education",
     label: "Education",
     title: "EDUCATION",
     body: "Degree or certificate\nSchool name - Year\nKey course, award, or focus",
+    titleColor: "#1d3557",
+    bodyColor: "#2b2b2b",
+    accentColor: "#3a86ff",
   },
   {
     id: "experience",
     label: "Experience",
     title: "EXPERIENCE",
     body: "Role title - Company\n- Achievement or responsibility\n- Achievement or responsibility",
+    titleColor: "#2a2a2a",
+    bodyColor: "#303030",
+    accentColor: "#146c63",
   },
   {
     id: "projects",
     label: "Projects",
     title: "PROJECTS",
     body: "Project name\n- What you built or improved\n- Tools, result, or link",
+    titleColor: "#213547",
+    bodyColor: "#2f2f2f",
+    accentColor: "#ff8a00",
   },
   {
     id: "certifications",
     label: "Certifications",
     title: "CERTIFICATIONS",
     body: "Certification name - Issuer\nCertification name - Issuer",
+    titleColor: "#243b53",
+    bodyColor: "#2d3748",
+    accentColor: "#8a4fff",
   },
   {
     id: "custom",
     label: "Blank",
     title: "NEW SECTION",
     body: "Add details here",
+    titleColor: "#111111",
+    bodyColor: "#333333",
+    accentColor: "#146c63",
   },
 ];
 
@@ -270,6 +294,22 @@ function getOverlayLabel(overlay: Overlay) {
   if (overlay.type === "image") return overlay.imageLabel || "Image";
   if (overlay.type === "section") return overlay.sectionTitle?.trim() || "Section";
   return overlay.text?.trim() || "Text";
+}
+
+function getSectionLines(body = "") {
+  return body
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+}
+
+function isBulletSection(overlay: Overlay) {
+  return (
+    overlay.sectionTemplate === "skills" ||
+    overlay.sectionTemplate === "experience" ||
+    overlay.sectionTemplate === "projects" ||
+    getSectionLines(overlay.sectionBody).some((line) => line.trimStart().startsWith("- "))
+  );
 }
 
 function loadImageFromDataUrl(dataUrl: string) {
@@ -544,26 +584,28 @@ export function PdfEditor() {
         const endX = Math.min(canvas.width - 1, Math.ceil((base.x + base.width) * scaleX));
         const startY = Math.max(0, Math.floor(margin * scaleY));
         const endY = Math.min(canvas.height - 1, Math.ceil((pageInfo.height - margin) * scaleY));
-        const stepX = Math.max(3, Math.floor((endX - startX) / 90));
-        const stepY = Math.max(3, Math.floor(canvas.height / 260));
+        const stepX = Math.max(2, Math.floor((endX - startX) / 140));
+        const stepY = Math.max(2, Math.floor(canvas.height / 340));
 
         try {
           for (let y = endY; y >= startY; y -= stepY) {
-            const row = context.getImageData(startX, y, Math.max(1, endX - startX), 1).data;
-            let hasInk = false;
+            const bandHeight = Math.min(5, endY - y + 1);
+            const row = context.getImageData(startX, Math.max(startY, y - bandHeight + 1), Math.max(1, endX - startX), bandHeight).data;
+            let inkHits = 0;
 
             for (let x = 0; x < row.length; x += stepX * 4) {
               const red = row[x];
               const green = row[x + 1];
               const blue = row[x + 2];
               const alpha = row[x + 3];
-              if (alpha > 20 && (red < 235 || green < 235 || blue < 235)) {
-                hasInk = true;
-                break;
+              const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+              if (alpha > 20 && luminance < 222) {
+                inkHits += 1;
+                if (inkHits >= 3) break;
               }
             }
 
-            if (hasInk) {
+            if (inkHits >= 3) {
               contentBottom = Math.max(contentBottom, y / scaleY);
               break;
             }
@@ -582,7 +624,9 @@ export function PdfEditor() {
     }
 
     const suggestedY = Math.max(margin, Math.min(pageInfo.height - sectionHeight - margin, contentBottom + 18));
-    const isNearInsertionPoint = point.y >= suggestedY - 110 && point.y <= suggestedY + sectionHeight + 90;
+    const isNearInsertionPoint =
+      point.y >= Math.max(margin, contentBottom - 95) &&
+      point.y <= Math.min(pageInfo.height - margin, suggestedY + sectionHeight + 140);
     if (!isNearInsertionPoint) return null;
 
     return {
@@ -653,12 +697,15 @@ export function PdfEditor() {
       y: Math.max(0, Math.min(pageInfo.height - height, placement.y)),
       width: placement.width,
       height,
-      color: "#111111",
+      color: template.titleColor,
       fontSize: 10,
       titleSize: 12,
       sectionTitle: template.title,
       sectionBody: template.body,
       sectionTemplate: template.id,
+      sectionTitleColor: template.titleColor,
+      sectionBodyColor: template.bodyColor,
+      sectionAccentColor: template.accentColor,
     };
 
     commitOverlays([...overlays, overlay]);
@@ -1210,6 +1257,40 @@ export function PdfEditor() {
     }
   };
 
+  const updateSelectedSectionColor = (
+    field: "sectionTitleColor" | "sectionBodyColor" | "sectionAccentColor",
+    color: string,
+  ) => {
+    if (!isHexColor(color) || selectedOverlay?.type !== "section") return;
+    if (field === "sectionTitleColor") {
+      setTextColor(color);
+      updateOverlay(selectedOverlay.id, { color, sectionTitleColor: color });
+      return;
+    }
+    updateOverlay(selectedOverlay.id, { [field]: color });
+  };
+
+  const updateSectionBody = (overlay: Overlay, value: string) => {
+    updateOverlay(overlay.id, { sectionBody: value });
+  };
+
+  const continueSectionRow = (event: ReactKeyboardEvent<HTMLTextAreaElement>, overlay: Overlay) => {
+    if (event.key !== "Enter" || event.shiftKey || !isBulletSection(overlay)) return;
+
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const value = target.value;
+    const nextValue = `${value.slice(0, start)}\n- ${value.slice(end)}`;
+    updateSectionBody(overlay, nextValue);
+
+    window.requestAnimationFrame(() => {
+      target.selectionStart = start + 3;
+      target.selectionEnd = start + 3;
+    });
+  };
+
   const updateSelectedBoxColor = (color: string) => {
     if (!isHexColor(color)) return;
     setPickedColor(color);
@@ -1454,47 +1535,59 @@ export function PdfEditor() {
             page.drawLine({ start: end, end: right, thickness, color: rgb(color.r, color.g, color.b) });
           }
         } else if (overlay.type === "section") {
-          const color = hexToRgb(overlay.color);
+          const titleColor = hexToRgb(overlay.sectionTitleColor || overlay.color);
+          const bodyColor = hexToRgb(overlay.sectionBodyColor || overlay.color);
+          const accentColor = hexToRgb(overlay.sectionAccentColor || overlay.color);
           const titleSize = (overlay.titleSize || 12) * scaleY;
           const bodySize = (overlay.fontSize || 10) * scaleY;
           const lineHeight = bodySize * 1.25;
           const top = y + overlay.height * scaleY;
-          const titleY = top - titleSize;
+          const accentWidth = Math.max(2, 3 * scaleX);
+          const contentX = x + accentWidth + 5 * scaleX;
+          const titleY = top - titleSize - 2 * scaleY;
           const dividerY = titleY - titleSize * 0.55;
           const bodyStartY = dividerY - lineHeight * 0.9;
-          const bodyLines = (overlay.sectionBody || "")
-            .split("\n")
-            .map((line) => line.trimEnd())
-            .filter(Boolean);
+          const bodyLines = getSectionLines(overlay.sectionBody);
+
+          page.drawRectangle({
+            x,
+            y,
+            width: accentWidth,
+            height: overlay.height * scaleY,
+            color: rgb(accentColor.r, accentColor.g, accentColor.b),
+            opacity: 0.95,
+            borderWidth: 0,
+          });
 
           if (overlay.sectionTitle) {
             page.drawText(overlay.sectionTitle, {
-              x,
+              x: contentX,
               y: titleY,
               size: titleSize,
               font: boldFont,
-              color: rgb(color.r, color.g, color.b),
-              maxWidth: overlay.width * scaleX,
+              color: rgb(titleColor.r, titleColor.g, titleColor.b),
+              maxWidth: overlay.width * scaleX - accentWidth,
             });
           }
 
           page.drawLine({
-            start: { x, y: dividerY },
+            start: { x: contentX, y: dividerY },
             end: { x: x + overlay.width * scaleX, y: dividerY },
             thickness: Math.max(0.6, scaleY),
-            color: rgb(color.r, color.g, color.b),
+            color: rgb(accentColor.r, accentColor.g, accentColor.b),
+            opacity: 0.85,
           });
 
           bodyLines.forEach((line, index) => {
             const lineY = bodyStartY - index * lineHeight;
             if (lineY < y + bodySize * 0.5) return;
             page.drawText(line, {
-              x,
+              x: contentX,
               y: lineY,
               size: bodySize,
               font,
-              color: rgb(color.r, color.g, color.b),
-              maxWidth: overlay.width * scaleX,
+              color: rgb(bodyColor.r, bodyColor.g, bodyColor.b),
+              maxWidth: overlay.width * scaleX - accentWidth,
             });
           });
         } else if (overlay.text) {
@@ -1877,24 +1970,45 @@ export function PdfEditor() {
 
                 {showSectionControls ? (
                   <>
-                    <label className="block text-sm font-medium">
-                      Section color
-                      <div className="mt-2 flex items-center gap-2">
-                        <input
-                          className="h-10 w-14 rounded-md border border-[#ded8cc] bg-white p-1"
-                          type="color"
-                          value={textColor}
-                          onFocus={recordHistory}
-                          onChange={(event) => updateSelectedTextColor(event.target.value)}
-                        />
-                        <input
-                          className="h-10 min-w-0 flex-1 rounded-md border border-[#ded8cc] bg-white px-3 font-mono text-sm"
-                          value={textColor}
-                          onFocus={recordHistory}
-                          onChange={(event) => updateSelectedTextColor(event.target.value)}
-                        />
-                      </div>
-                    </label>
+                    <div className="space-y-2 rounded-md border border-[#ded8cc] bg-white p-3">
+                      <div className="text-sm font-medium">Section colors</div>
+                      {[
+                        {
+                          label: "Title",
+                          field: "sectionTitleColor" as const,
+                          value: selectedOverlay?.sectionTitleColor || selectedOverlay?.color || "#111111",
+                        },
+                        {
+                          label: "Rows",
+                          field: "sectionBodyColor" as const,
+                          value: selectedOverlay?.sectionBodyColor || selectedOverlay?.color || "#333333",
+                        },
+                        {
+                          label: "Accent",
+                          field: "sectionAccentColor" as const,
+                          value: selectedOverlay?.sectionAccentColor || selectedOverlay?.color || "#146c63",
+                        },
+                      ].map((item) => (
+                        <label key={item.field} className="flex items-center justify-between gap-3 text-sm">
+                          <span>{item.label}</span>
+                          <span className="flex items-center gap-2">
+                            <input
+                              className="h-8 w-10 rounded-md border border-[#ded8cc] bg-white p-1"
+                              type="color"
+                              value={item.value}
+                              onFocus={recordHistory}
+                              onChange={(event) => updateSelectedSectionColor(item.field, event.target.value)}
+                            />
+                            <input
+                              className="h-8 w-24 rounded-md border border-[#ded8cc] bg-white px-2 font-mono text-xs"
+                              value={item.value}
+                              onFocus={recordHistory}
+                              onChange={(event) => updateSelectedSectionColor(item.field, event.target.value)}
+                            />
+                          </span>
+                        </label>
+                      ))}
+                    </div>
 
                     <label className="block text-sm font-medium">
                       Section title
@@ -1916,6 +2030,11 @@ export function PdfEditor() {
                         className="mt-2 min-h-28 w-full resize-y rounded-md border border-[#ded8cc] bg-white px-3 py-2 text-sm"
                         value={selectedOverlay?.sectionBody || ""}
                         onFocus={recordHistory}
+                        onKeyDown={(event) => {
+                          if (selectedOverlay?.type === "section") {
+                            continueSectionRow(event, selectedOverlay);
+                          }
+                        }}
                         onChange={(event) => {
                           if (selectedOverlay?.type === "section") {
                             updateOverlay(selectedOverlay.id, { sectionBody: event.target.value });
@@ -2208,16 +2327,22 @@ export function PdfEditor() {
                           {sectionTemplates.map((template) => (
                             <button
                               key={template.id}
-                              className="flex min-h-10 items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm font-medium transition hover:bg-[#f5f3ef]"
+                              className="flex min-h-11 items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm font-medium transition hover:bg-[#f5f3ef]"
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 addSectionOverlay(template, sectionMenu);
                               }}
                             >
-                              <span>
-                                <span className="block">{template.label}</span>
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span
+                                  className="h-7 w-1.5 shrink-0 rounded-full"
+                                  style={{ background: template.accentColor }}
+                                />
+                                <span className="min-w-0">
+                                <span className="block" style={{ color: template.titleColor }}>{template.label}</span>
                                 <span className="block text-xs font-normal text-[#69635b]">{template.title}</span>
+                                </span>
                               </span>
                               <Plus size={14} />
                             </button>
@@ -2374,66 +2499,93 @@ export function PdfEditor() {
                   >
                     {overlay.type === "section" ? (
                       editingSectionId === overlay.id ? (
-                        <div className="h-full w-full overflow-hidden rounded-sm bg-white/35" style={{ color: overlay.color }}>
-                          <input
-                            className="w-full border-0 bg-white/70 px-1 font-bold uppercase outline-none"
-                            style={{
-                              color: overlay.color,
-                              fontSize: (overlay.titleSize || 12) * zoom,
-                              lineHeight: 1.05,
-                            }}
-                            value={overlay.sectionTitle || ""}
-                            onFocus={recordHistory}
-                            onChange={(event) => updateOverlay(overlay.id, { sectionTitle: event.target.value })}
-                            onPointerDown={(event) => event.stopPropagation()}
-                          />
-                          <div
-                            className="my-1 w-full"
-                            style={{
-                              height: Math.max(1, zoom),
-                              background: overlay.color,
-                            }}
-                          />
-                          <textarea
-                            className="w-full resize-none border-0 bg-white/70 px-1 outline-none"
-                            style={{
-                              color: overlay.color,
-                              fontSize: (overlay.fontSize || 10) * zoom,
-                              height: Math.max(24, overlay.height * zoom - (overlay.titleSize || 12) * zoom - 8),
-                              lineHeight: 1.25,
-                            }}
-                            value={overlay.sectionBody || ""}
-                            onFocus={recordHistory}
-                            onChange={(event) => updateOverlay(overlay.id, { sectionBody: event.target.value })}
-                            onPointerDown={(event) => event.stopPropagation()}
-                          />
+                        <div
+                          className="grid h-full w-full overflow-hidden rounded-sm bg-white/80 shadow-[0_0_0_1px_rgba(20,108,99,0.14)]"
+                          style={{ gridTemplateColumns: `${Math.max(3, 4 * zoom)}px 1fr` }}
+                        >
+                          <div style={{ background: overlay.sectionAccentColor || overlay.color }} />
+                          <div className="min-w-0 px-1.5 py-1">
+                            <input
+                              className="w-full border-0 bg-white/80 font-bold uppercase outline-none"
+                              style={{
+                                color: overlay.sectionTitleColor || overlay.color,
+                                fontSize: (overlay.titleSize || 12) * zoom,
+                                lineHeight: 1.05,
+                              }}
+                              value={overlay.sectionTitle || ""}
+                              onFocus={recordHistory}
+                              onChange={(event) => updateOverlay(overlay.id, { sectionTitle: event.target.value })}
+                              onPointerDown={(event) => event.stopPropagation()}
+                            />
+                            <div
+                              className="my-1 w-full"
+                              style={{
+                                height: Math.max(1, zoom),
+                                background: overlay.sectionAccentColor || overlay.color,
+                              }}
+                            />
+                            <textarea
+                              className="w-full resize-none border-0 bg-white/80 outline-none"
+                              style={{
+                                color: overlay.sectionBodyColor || overlay.color,
+                                fontSize: (overlay.fontSize || 10) * zoom,
+                                height: Math.max(24, overlay.height * zoom - (overlay.titleSize || 12) * zoom - 12),
+                                lineHeight: 1.25,
+                              }}
+                              value={overlay.sectionBody || ""}
+                              onFocus={recordHistory}
+                              onKeyDown={(event) => continueSectionRow(event, overlay)}
+                              onChange={(event) => updateSectionBody(overlay, event.target.value)}
+                              onPointerDown={(event) => event.stopPropagation()}
+                            />
+                          </div>
                         </div>
                       ) : (
-                        <div className="h-full w-full overflow-hidden bg-transparent" style={{ color: overlay.color }}>
-                          <div
-                            className="truncate font-bold uppercase"
-                            style={{
-                              fontSize: (overlay.titleSize || 12) * zoom,
-                              lineHeight: 1.05,
-                            }}
-                          >
-                            {overlay.sectionTitle || "SECTION"}
-                          </div>
-                          <div
-                            className="my-1 w-full"
-                            style={{
-                              height: Math.max(1, zoom),
-                              background: overlay.color,
-                            }}
-                          />
-                          <div
-                            className="whitespace-pre-wrap break-words"
-                            style={{
-                              fontSize: (overlay.fontSize || 10) * zoom,
-                              lineHeight: 1.25,
-                            }}
-                          >
-                            {overlay.sectionBody}
+                        <div
+                          className="grid h-full w-full overflow-hidden rounded-sm bg-white/15"
+                          style={{ gridTemplateColumns: `${Math.max(3, 4 * zoom)}px 1fr` }}
+                        >
+                          <div style={{ background: overlay.sectionAccentColor || overlay.color }} />
+                          <div className="min-w-0 px-1.5 py-1">
+                            <div
+                              className="truncate font-bold uppercase"
+                              style={{
+                                color: overlay.sectionTitleColor || overlay.color,
+                                fontSize: (overlay.titleSize || 12) * zoom,
+                                lineHeight: 1.05,
+                              }}
+                            >
+                              {overlay.sectionTitle || "SECTION"}
+                            </div>
+                            <div
+                              className="my-1 w-full"
+                              style={{
+                                height: Math.max(1, zoom),
+                                background: overlay.sectionAccentColor || overlay.color,
+                              }}
+                            />
+                            <div
+                              className="space-y-0.5 overflow-hidden"
+                              style={{
+                                color: overlay.sectionBodyColor || overlay.color,
+                                fontSize: (overlay.fontSize || 10) * zoom,
+                                lineHeight: 1.25,
+                              }}
+                            >
+                              {getSectionLines(overlay.sectionBody).map((line, index) => (
+                                <div key={`${overlay.id}-${index}`} className="flex min-w-0 gap-1">
+                                  {line.trimStart().startsWith("- ") ? (
+                                    <span
+                                      className="mt-[0.35em] h-[0.38em] w-[0.38em] shrink-0 rounded-full"
+                                      style={{ background: overlay.sectionAccentColor || overlay.color }}
+                                    />
+                                  ) : null}
+                                  <span className="min-w-0 break-words">
+                                    {line.trimStart().startsWith("- ") ? line.trimStart().slice(2) : line}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       )
