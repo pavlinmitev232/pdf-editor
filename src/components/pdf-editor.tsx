@@ -573,7 +573,7 @@ export function PdfEditor() {
     const margin = Math.max(28, pageInfo.width * 0.055);
     const sectionHeight = 132;
     const canvas = canvasRef.current;
-    let contentBottom = margin;
+    const contentRows: Array<{ top: number; bottom: number; source: "pdf" | "overlay" }> = [];
 
     if (canvas) {
       const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -586,11 +586,13 @@ export function PdfEditor() {
         const endY = Math.min(canvas.height - 1, Math.ceil((pageInfo.height - margin) * scaleY));
         const stepX = Math.max(2, Math.floor((endX - startX) / 140));
         const stepY = Math.max(2, Math.floor(canvas.height / 340));
+        let runStart: number | null = null;
+        let lastInkY: number | null = null;
 
         try {
-          for (let y = endY; y >= startY; y -= stepY) {
+          for (let y = startY; y <= endY; y += stepY) {
             const bandHeight = Math.min(5, endY - y + 1);
-            const row = context.getImageData(startX, Math.max(startY, y - bandHeight + 1), Math.max(1, endX - startX), bandHeight).data;
+            const row = context.getImageData(startX, y, Math.max(1, endX - startX), bandHeight).data;
             let inkHits = 0;
 
             for (let x = 0; x < row.length; x += stepX * 4) {
@@ -606,12 +608,28 @@ export function PdfEditor() {
             }
 
             if (inkHits >= 3) {
-              contentBottom = Math.max(contentBottom, y / scaleY);
-              break;
+              runStart ??= y;
+              lastInkY = y + bandHeight;
+            } else if (runStart !== null && lastInkY !== null && y - lastInkY > stepY * 3) {
+              contentRows.push({
+                top: Math.max(margin, runStart / scaleY),
+                bottom: Math.min(pageInfo.height - margin, lastInkY / scaleY),
+                source: "pdf",
+              });
+              runStart = null;
+              lastInkY = null;
             }
           }
+
+          if (runStart !== null && lastInkY !== null) {
+            contentRows.push({
+              top: Math.max(margin, runStart / scaleY),
+              bottom: Math.min(pageInfo.height - margin, lastInkY / scaleY),
+              source: "pdf",
+            });
+          }
         } catch {
-          contentBottom = margin;
+          contentRows.length = 0;
         }
       }
     }
@@ -619,13 +637,48 @@ export function PdfEditor() {
     for (const overlay of currentOverlays) {
       const overlapsColumn = overlay.x < base.x + base.width && overlay.x + overlay.width > base.x;
       if (overlapsColumn) {
-        contentBottom = Math.max(contentBottom, overlay.y + overlay.height);
+        contentRows.push({
+          top: overlay.y,
+          bottom: overlay.y + overlay.height,
+          source: "overlay",
+        });
       }
     }
 
+    const mergedRows = contentRows
+      .filter((row) => row.bottom > margin && row.top < pageInfo.height - margin)
+      .sort((a, b) => a.top - b.top)
+      .reduce<Array<{ top: number; bottom: number; source: "pdf" | "overlay" }>>((rows, row) => {
+        const previous = rows.at(-1);
+        if (previous && row.top <= previous.bottom + 8) {
+          previous.bottom = Math.max(previous.bottom, row.bottom);
+          previous.source = previous.source === "overlay" || row.source === "overlay" ? "overlay" : "pdf";
+          return rows;
+        }
+        rows.push({ ...row });
+        return rows;
+      }, []);
+
+    const pointedRow =
+      mergedRows
+        .map((row) => ({
+          row,
+          distance:
+            point.y >= row.top - 22 && point.y <= row.bottom + 42
+              ? 0
+              : Math.min(Math.abs(point.y - row.top), Math.abs(point.y - row.bottom)),
+        }))
+        .filter((item) => item.distance <= 95)
+        .sort((a, b) => a.distance - b.distance || b.row.bottom - a.row.bottom)[0]?.row || null;
+    const lastRow = mergedRows.at(-1) || null;
+    const targetRow = pointedRow || (lastRow && point.y >= lastRow.bottom - 120 ? lastRow : null);
+
+    if (!targetRow) return null;
+
+    const contentBottom = Math.max(margin, targetRow.bottom);
     const suggestedY = Math.max(margin, Math.min(pageInfo.height - sectionHeight - margin, contentBottom + 18));
     const isNearInsertionPoint =
-      point.y >= Math.max(margin, contentBottom - 95) &&
+      point.y >= Math.max(margin, targetRow.top - 35) &&
       point.y <= Math.min(pageInfo.height - margin, suggestedY + sectionHeight + 140);
     if (!isNearInsertionPoint) return null;
 
@@ -970,6 +1023,7 @@ export function PdfEditor() {
   const handlePagePointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!pdfDocProxy) return;
     setEditingTextId(null);
+    setEditingSectionId(null);
     setSectionMenu(null);
     if (tool === "pick") {
       pickCanvasColor(event);
@@ -1023,6 +1077,8 @@ export function PdfEditor() {
       return;
     }
     setSelectedId(null);
+    setEditingTextId(null);
+    setEditingSectionId(null);
   };
 
   const handlePagePointerMove = (event: PointerEvent<HTMLElement>) => {
